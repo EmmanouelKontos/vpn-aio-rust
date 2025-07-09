@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application
+config.json
+*.log
+*.tmp
+
+# Build artifacts
+release/
+dist/
+
+# Font files (user should download)
+assets/fonts/*.ttf
+assets/fonts/*.otf
+!assets/fonts/placeholder.txt

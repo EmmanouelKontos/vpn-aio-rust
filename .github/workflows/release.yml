@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libx11-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+    
+    - name: Build release
+      run: cargo build --release
+    
+    - name: Create release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          target/release/vpn-manager
+        body: |
+          ## Changes
+          
+          - Enhanced UI with animations and loading states
+          - Improved error handling and stability
+          - Better VPN configuration management
+          - File browser for VPN config selection
+          - Combined remote access panel
+          - Production-ready build with comprehensive logging
+          
+          ## Installation
+          
+          Download the `vpn-manager` binary, make it executable, and run:
+          
+          ```bash
+          chmod +x vpn-manager
+          ./vpn-manager
+          ```
+          
+          For detailed installation instructions, see the [README](https://github.com/emmanouil/vpn-aio/blob/main/README.md).
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

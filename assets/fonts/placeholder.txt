@@ -1,0 +1,2 @@
+This directory would contain the Inter font file (Inter-Regular.ttf) for the UI.
+You can download it from https://fonts.google.com/specimen/Inter
