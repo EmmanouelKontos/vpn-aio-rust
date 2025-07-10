@@ -7,7 +7,7 @@ use crate::ui::theme::Theme;
 pub struct SettingsPanel;
 
 impl SettingsPanel {
-    pub fn draw(ui: &mut egui::Ui, config: &mut Config, system_info: &mut SystemInfo, package_installer: &PackageInstaller, app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>) {
+    pub fn draw(ui: &mut egui::Ui, config: &mut Config, system_info: &mut SystemInfo, package_installer: &PackageInstaller, app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>, checking_updates: &mut bool, installing_update: &mut bool, update_progress: &mut String) {
         let theme = Theme::new();
         
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -26,7 +26,7 @@ impl SettingsPanel {
         Self::draw_dependencies_card(ui, &theme, system_info, package_installer);
         ui.add_space(16.0);
         
-        Self::draw_updates_card(ui, &theme, app_updater, update_info);
+        Self::draw_updates_card(ui, &theme, app_updater, update_info, checking_updates, installing_update, update_progress);
         ui.add_space(16.0);
         
             Self::draw_about_card(ui, &theme);
@@ -219,7 +219,7 @@ impl SettingsPanel {
         });
     }
     
-    fn draw_updates_card(ui: &mut egui::Ui, theme: &Theme, _app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>) {
+    fn draw_updates_card(ui: &mut egui::Ui, theme: &Theme, app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>, checking_updates: &mut bool, installing_update: &mut bool, update_progress: &mut String) {
         Card::show(ui, theme, "Updates", |ui| {
             ui.horizontal(|ui| {
                 ui.label("Current Version:");
@@ -230,41 +230,163 @@ impl SettingsPanel {
             
             if let Some(update) = update_info {
                 if update.update_available {
-                    ui.label(egui::RichText::new(format!("New version available: {}", update.latest_version)).color(theme.success));
+                    ui.label(egui::RichText::new(format!("🎉 New version available: {}", update.latest_version)).color(theme.success));
                     ui.add_space(4.0);
                     
                     if !update.release_notes.is_empty() {
                         ui.label("Release Notes:");
                         egui::ScrollArea::vertical()
-                            .max_height(100.0)
+                            .max_height(120.0)
                             .show(ui, |ui| {
                                 ui.label(egui::RichText::new(&update.release_notes).color(theme.text_secondary));
                             });
                     }
                     
-                    ui.add_space(8.0);
+                    ui.add_space(12.0);
                     
-                    if GlassButton::show(ui, theme, "Download Update", true).clicked() {
-                        // This would trigger the update download
-                    }
+                    ui.horizontal(|ui| {
+                        if *installing_update {
+                            ui.spinner();
+                            ui.label(if update_progress.is_empty() { 
+                                "Installing update..." 
+                            } else { 
+                                update_progress.as_str() 
+                            });
+                        } else if GlassButton::show(ui, theme, "🚀 Install Update", true).clicked() {
+                            *installing_update = true;
+                            *update_progress = "Downloading update...".to_string();
+                            
+                            // Trigger async update installation
+                            let app_updater_clone = app_updater.clone();
+                            let update_clone = update.clone();
+                            let ctx = ui.ctx().clone();
+                            
+                            std::thread::spawn(move || {
+                                let rt = tokio::runtime::Runtime::new().unwrap();
+                                rt.block_on(async {
+                                    match app_updater_clone.download_and_install_update(&update_clone).await {
+                                        Ok(_) => {
+                                            log::info!("Update installed successfully - restarting application");
+                                            // The updater will restart the application automatically
+                                            if let Err(e) = app_updater_clone.restart_application() {
+                                                log::error!("Failed to restart application: {}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to install update: {}", e);
+                                            ctx.request_repaint();
+                                        }
+                                    }
+                                });
+                            });
+                        }
+                        
+                        if ui.small_button("📥 Download Only").clicked() {
+                            #[cfg(windows)]
+                            {
+                                let _ = std::process::Command::new("cmd")
+                                    .args(&["/c", "start", &update.download_url])
+                                    .spawn();
+                            }
+                            
+                            #[cfg(unix)]
+                            {
+                                let _ = std::process::Command::new("xdg-open")
+                                    .arg(&update.download_url)
+                                    .spawn();
+                            }
+                        }
+                    });
+                    
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("⚠️ The application will restart after installing the update").color(theme.warning));
+                    
                 } else {
-                    ui.label(egui::RichText::new("You are using the latest version").color(theme.success));
+                    ui.label(egui::RichText::new("✅ You are using the latest version").color(theme.success));
+                    
+                    ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        if GlassButton::show(ui, theme, "🔄 Check Again", true).clicked() {
+                            *update_info = None;
+                        }
+                        
+                        if ui.small_button("📋 View Releases").clicked() {
+                            #[cfg(windows)]
+                            {
+                                let _ = std::process::Command::new("cmd")
+                                    .args(&["/c", "start", "https://github.com/EmmanouelKontos/vpn-aio-rust/releases"])
+                                    .spawn();
+                            }
+                            
+                            #[cfg(unix)]
+                            {
+                                let _ = std::process::Command::new("xdg-open")
+                                    .arg("https://github.com/EmmanouelKontos/vpn-aio-rust/releases")
+                                    .spawn();
+                            }
+                        }
+                    });
                 }
             } else {
-                if GlassButton::show(ui, theme, "Check for Updates", true).clicked() {
-                    // This would trigger the update check
-                    // For now, just show placeholder
-                }
+                ui.horizontal(|ui| {
+                    if *checking_updates {
+                        ui.spinner();
+                        ui.label("Checking for updates...");
+                        
+                        // Add a cancel button
+                        if ui.small_button("Cancel").clicked() {
+                            *checking_updates = false;
+                        }
+                    } else if GlassButton::show(ui, theme, "🔍 Check for Updates", true).clicked() {
+                        // Use a simple sync approach for now
+                        *checking_updates = true;
+                        
+                        let app_updater_clone = app_updater.clone();
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        
+                        match rt.block_on(app_updater_clone.check_for_updates()) {
+                            Ok(info) => {
+                                log::info!("Update check completed: update_available={}", info.update_available);
+                                *update_info = Some(info);
+                                *checking_updates = false;
+                            }
+                            Err(e) => {
+                                log::error!("Failed to check for updates: {}", e);
+                                *checking_updates = false;
+                            }
+                        }
+                    }
+                    
+                    if ui.small_button("📋 Release Notes").clicked() {
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("cmd")
+                                .args(&["/c", "start", "https://github.com/EmmanouelKontos/vpn-aio-rust/releases"])
+                                .spawn();
+                        }
+                        
+                        #[cfg(unix)]
+                        {
+                            let _ = std::process::Command::new("xdg-open")
+                                .arg("https://github.com/EmmanouelKontos/vpn-aio-rust/releases")
+                                .spawn();
+                        }
+                    }
+                });
+                
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Click 'Check for Updates' to fetch the latest version information").color(theme.text_secondary));
             }
             
             ui.add_space(8.0);
             
             ui.horizontal(|ui| {
                 ui.label("Repository:");
-                ui.hyperlink("https://github.com/emmanouil/vpn-aio");
+                ui.hyperlink("https://github.com/EmmanouelKontos/vpn-aio-rust");
             });
         });
     }
+    
     
     fn draw_about_card(ui: &mut egui::Ui, theme: &Theme) {
         Card::show(ui, theme, "About", |ui| {

@@ -62,13 +62,17 @@ fn main() -> eframe::Result<()> {
         std::process::exit(1);
     }
 
+    let icon_data = include_bytes!("../assets/vpn-aio.png");
+    let icon = eframe::icon_data::from_png_bytes(icon_data).unwrap_or_default();
+    
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
             .with_min_inner_size([800.0, 600.0])
             .with_decorations(true)
             .with_resizable(true)
-            .with_title("VPN Manager"),
+            .with_title("VPN Manager")
+            .with_icon(icon),
         ..Default::default()
     };
 

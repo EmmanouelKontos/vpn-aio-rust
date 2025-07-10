@@ -1,4 +1,4 @@
-use eframe::egui::{self, FontFamily, FontId, Rounding, Stroke, TextStyle};
+use eframe::egui::{self, FontFamily, FontId, Rounding, Stroke, TextStyle, ColorImage, TextureHandle};
 use crate::config::{Config, VpnType};
 use crate::network::NetworkManager;
 use crate::system::{SystemInfo, installer::PackageInstaller, updater::{AppUpdater, UpdateInfo}};
@@ -21,6 +21,7 @@ pub struct App {
     package_installer: PackageInstaller,
     app_updater: AppUpdater,
     update_info: Option<UpdateInfo>,
+    logo_texture: Option<TextureHandle>,
     // Input field state
     new_vpn_name: String,
     new_vpn_config_path: String,
@@ -42,6 +43,11 @@ pub struct App {
     connection_feedback: Option<String>,
     loading_actions: std::collections::HashSet<String>,
     animation_time: f32,
+    checking_updates: bool,
+    installing_update: bool,
+    update_progress: String,
+    update_notification: Option<String>,
+    last_update_check: std::time::Instant,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -68,7 +74,7 @@ impl App {
         
         info!("Detected system: {}", system_info.distribution);
         let package_installer = PackageInstaller::new(&system_info);
-        let app_updater = AppUpdater::new("emmanouil", "vpn-aio", env!("CARGO_PKG_VERSION"));
+        let app_updater = AppUpdater::new("EmmanouelKontos", "vpn-aio-rust", env!("CARGO_PKG_VERSION"));
         
         info!("Loading configuration...");
         let config = Config::load().unwrap_or_else(|e| {
@@ -90,6 +96,7 @@ impl App {
             package_installer,
             app_updater,
             update_info: None,
+            logo_texture: None,
             // Initialize input fields
             new_vpn_name: String::new(),
             new_vpn_config_path: String::new(),
@@ -111,6 +118,11 @@ impl App {
             connection_feedback: None,
             loading_actions: std::collections::HashSet::new(),
             animation_time: 0.0,
+            checking_updates: false,
+            installing_update: false,
+            update_progress: String::new(),
+            update_notification: None,
+            last_update_check: std::time::Instant::now(),
         };
 
         // Auto-connect to VPN if enabled
@@ -127,6 +139,12 @@ impl App {
         info!("Setting up fonts and styles...");
         app.setup_fonts(cc);
         app.setup_style(cc);
+        
+        info!("Loading logo texture...");
+        app.load_logo_texture(cc);
+        
+        info!("Checking for updates...");
+        app.schedule_update_check();
         
         info!("Application initialized successfully");
         Ok(app)
@@ -203,12 +221,106 @@ impl App {
 
         cc.egui_ctx.set_style(style);
     }
+    
+    fn load_logo_texture(&mut self, cc: &eframe::CreationContext<'_>) {
+        let logo_bytes = include_bytes!("../../assets/vpn-aio.png");
+        
+        match image::load_from_memory(logo_bytes) {
+            Ok(dynamic_image) => {
+                let image_buffer = dynamic_image.to_rgba8();
+                let size = [image_buffer.width() as usize, image_buffer.height() as usize];
+                let pixels = image_buffer.as_flat_samples();
+                
+                let color_image = ColorImage::from_rgba_unmultiplied(size, pixels.as_slice());
+                
+                self.logo_texture = Some(cc.egui_ctx.load_texture(
+                    "logo",
+                    color_image,
+                    egui::TextureOptions::LINEAR
+                ));
+                
+                log::info!("Logo texture loaded successfully");
+            }
+            Err(e) => {
+                log::warn!("Failed to load logo texture: {}", e);
+            }
+        }
+    }
+    
+    fn schedule_update_check(&mut self) {
+        if self.checking_updates || self.update_info.is_some() {
+            return;
+        }
+        
+        self.checking_updates = true;
+        let app_updater = self.app_updater.clone();
+        
+        // Use a channel to communicate results back
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+        
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                match app_updater.check_for_updates().await {
+                    Ok(info) => {
+                        let _ = tx.send(Ok(info));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Err(e.to_string()));
+                    }
+                }
+            });
+        });
+        
+        // Store the receiver for later polling
+        // For now, we'll just log and continue
+        std::thread::spawn(move || {
+            if let Ok(result) = rx.recv() {
+                match result {
+                    Ok(info) => {
+                        if info.update_available {
+                            log::info!("Update available: {} -> {}", info.current_version, info.latest_version);
+                        } else {
+                            log::info!("No updates available, current version {} is latest", info.current_version);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to check for updates: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     fn draw_sidebar(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
             ui.add_space(20.0);
             
-            ui.heading("VPN Manager");
+            // Display logo if available
+            if let Some(logo_texture) = &self.logo_texture {
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    ui.add(egui::Image::new(logo_texture)
+                        .max_width(60.0)
+                        .max_height(60.0)
+                        .rounding(egui::Rounding::same(8.0)));
+                    ui.add_space(10.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(8.0);
+                        ui.strong("VPN Manager");
+                        ui.label("All-in-One");
+                    });
+                });
+            } else {
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    ui.vertical(|ui| {
+                        ui.heading("VPN Manager");
+                        ui.label("All-in-One");
+                    });
+                });
+            }
             ui.add_space(30.0);
 
             let button_size = egui::vec2(200.0, 40.0);
@@ -227,7 +339,18 @@ impl App {
             
             ui.add_space(20.0);
             
-            if ui.add_sized(button_size, egui::Button::new("⚙️ Settings")).clicked() {
+            // Show update indicator on Settings button if update is available
+            let settings_text = if let Some(update) = &self.update_info {
+                if update.update_available {
+                    "⚙️ Settings 🔴"
+                } else {
+                    "⚙️ Settings"
+                }
+            } else {
+                "⚙️ Settings"
+            };
+            
+            if ui.add_sized(button_size, egui::Button::new(settings_text)).clicked() {
                 self.current_panel = Panel::Settings;
             }
         });
@@ -252,7 +375,7 @@ impl App {
                     &mut self.new_wol_ip, &mut self.new_wol_port);
             }
             Panel::Settings => {
-                SettingsPanel::draw(ui, &mut self.config, &mut self.system_info, &self.package_installer, &self.app_updater, &mut self.update_info);
+                SettingsPanel::draw(ui, &mut self.config, &mut self.system_info, &self.package_installer, &self.app_updater, &mut self.update_info, &mut self.checking_updates, &mut self.installing_update, &mut self.update_progress);
             }
         }
     }
@@ -278,17 +401,22 @@ impl eframe::App for App {
                 self.animation_time = 0.0;
             }
         }
-
-        // Safely handle network updates with proper error handling
-        if let Ok(runtime) = tokio::runtime::Runtime::new() {
-            let _ = runtime.block_on(async {
-                if let Err(e) = self.network_manager.update_device_statuses().await {
-                    log::warn!("Failed to update device statuses: {}", e);
-                }
-            });
-        } else {
-            log::error!("Failed to create tokio runtime");
+        
+        // Clear update notifications after 10 seconds
+        if let Some(_) = &self.update_notification {
+            if self.last_update_check.elapsed().as_secs() > 10 {
+                self.update_notification = None;
+            }
         }
+        
+        // Check for updates periodically (every 24 hours)
+        if self.last_update_check.elapsed().as_secs() > 86400 && !self.checking_updates {
+            self.schedule_update_check();
+            self.last_update_check = std::time::Instant::now();
+        }
+
+        // Removed automatic device status updates to prevent CMD spawning issues
+        // Status updates will be manual or triggered by user actions only
 
         egui::SidePanel::left("sidebar")
             .resizable(false)
@@ -328,6 +456,37 @@ impl eframe::App for App {
                         ui.label(feedback);
                     });
                 });
+        }
+        
+        // Show update notifications
+        if let Some(update_msg) = self.update_notification.clone() {
+            let mut should_close = false;
+            let mut should_view = false;
+            
+            egui::Window::new("Update Available")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 50.0))
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("🎉");
+                        ui.label(&update_msg);
+                        if ui.small_button("View").clicked() {
+                            should_view = true;
+                            should_close = true;
+                        }
+                        if ui.small_button("Dismiss").clicked() {
+                            should_close = true;
+                        }
+                    });
+                });
+            
+            if should_view {
+                self.current_panel = Panel::Settings;
+            }
+            if should_close {
+                self.update_notification = None;
+            }
         }
     }
 

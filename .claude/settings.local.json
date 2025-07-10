@@ -14,7 +14,9 @@
       "Bash(dos2unix:*)",
       "Bash(sed:*)",
       "Bash(\"/mnt/c/Users/FRONTDESK_PC/.cargo/bin/cargo.exe\" --version)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(rustc:*)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }

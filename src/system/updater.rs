@@ -26,6 +26,7 @@ struct GitHubAsset {
     browser_download_url: String,
 }
 
+#[derive(Clone)]
 pub struct AppUpdater {
     repo_owner: String,
     repo_name: String,
@@ -87,9 +88,20 @@ impl AppUpdater {
     }
     
     fn get_download_url(&self, assets: &[GitHubAsset]) -> Result<String> {
-        // Look for Linux binary
+        // Determine platform
+        #[cfg(target_os = "windows")]
+        let platform_keywords = ["windows", "win32", "win64", "x86_64", "amd64"];
+        
+        #[cfg(target_os = "linux")]
+        let platform_keywords = ["linux", "x86_64", "amd64"];
+        
+        #[cfg(target_os = "macos")]
+        let platform_keywords = ["macos", "darwin", "osx", "x86_64", "amd64"];
+        
+        // Look for platform-specific binary
         for asset in assets {
-            if asset.name.contains("linux") && (asset.name.contains("x86_64") || asset.name.contains("amd64")) {
+            let name_lower = asset.name.to_lowercase();
+            if platform_keywords.iter().any(|&keyword| name_lower.contains(keyword)) {
                 return Ok(asset.browser_download_url.clone());
             }
         }
@@ -104,7 +116,14 @@ impl AppUpdater {
     
     pub async fn download_and_install_update(&self, update_info: &UpdateInfo) -> Result<()> {
         let temp_dir = std::env::temp_dir();
-        let filename = format!("vpn-manager-{}", update_info.latest_version);
+        
+        // Determine file extension based on platform
+        #[cfg(windows)]
+        let extension = ".exe";
+        #[cfg(not(windows))]
+        let extension = "";
+        
+        let filename = format!("vpn-manager-{}{}", update_info.latest_version, extension);
         let temp_file = temp_dir.join(&filename);
         
         // Download the update
@@ -118,7 +137,7 @@ impl AppUpdater {
         let content = response.bytes().await?;
         std::fs::write(&temp_file, content)?;
         
-        // Make executable
+        // Make executable on Unix systems
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -131,14 +150,39 @@ impl AppUpdater {
         let current_exe = std::env::current_exe()?;
         let backup_path = format!("{}.backup", current_exe.display());
         
-        // Create backup
+        // Create backup of current executable
         std::fs::copy(&current_exe, &backup_path)?;
         
-        // Replace current executable
-        std::fs::copy(&temp_file, &current_exe)?;
+        // On Windows, we need to handle the file replacement differently
+        #[cfg(windows)]
+        {
+            // Use a batch script to replace the executable after the current process exits
+            let batch_script = format!(
+                r#"@echo off
+timeout /t 2 /nobreak >nul
+move "{}" "{}"
+start "" "{}"
+del "%~f0""#,
+                temp_file.display(),
+                current_exe.display(),
+                current_exe.display()
+            );
+            
+            let script_path = temp_dir.join("update.bat");
+            std::fs::write(&script_path, batch_script)?;
+            
+            // Start the batch script
+            Command::new("cmd")
+                .args(["/C", "start", "", script_path.to_str().unwrap()])
+                .spawn()?;
+        }
         
-        // Clean up temp file
-        std::fs::remove_file(&temp_file)?;
+        #[cfg(not(windows))]
+        {
+            // On Unix systems, we can replace the file directly
+            std::fs::copy(&temp_file, &current_exe)?;
+            std::fs::remove_file(&temp_file)?;
+        }
         
         Ok(())
     }

@@ -65,7 +65,21 @@ impl RemotePanel {
                             if GlassButton::show(ui, theme, "Connect", true).clicked() {
                                 let runtime = tokio::runtime::Runtime::new().unwrap();
                                 runtime.block_on(async {
-                                    let _ = crate::network::rdp::connect(rdp_config).await;
+                                    match crate::network::rdp::connect(rdp_config).await {
+                                        Ok(_) => log::info!("RDP connection initiated successfully"),
+                                        Err(e) => log::error!("RDP connection failed: {}", e),
+                                    }
+                                });
+                            }
+                            
+                            #[cfg(windows)]
+                            if ui.small_button("🧪").clicked() {
+                                let runtime = tokio::runtime::Runtime::new().unwrap();
+                                runtime.block_on(async {
+                                    match crate::network::rdp::test_mstsc_basic().await {
+                                        Ok(_) => log::info!("mstsc test passed"),
+                                        Err(e) => log::error!("mstsc test failed: {}", e),
+                                    }
                                 });
                             }
                         });

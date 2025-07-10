@@ -28,6 +28,7 @@ which = "6.0"
 sudo = "0.6"
 rfd = "0.15"
 sysinfo = "0.30"
+image = "0.24"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -35,3 +36,6 @@ windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Regi
 
 [target.'cfg(unix)'.dependencies]
 nix = "0.29"
+
+[build-dependencies]
+winres = "0.1"
