@@ -7,13 +7,17 @@ use crate::ui::theme::Theme;
 pub struct SettingsPanel;
 
 impl SettingsPanel {
-    pub fn draw(ui: &mut egui::Ui, config: &mut Config, system_info: &SystemInfo, package_installer: &PackageInstaller, app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>) {
+    pub fn draw(ui: &mut egui::Ui, config: &mut Config, system_info: &mut SystemInfo, package_installer: &PackageInstaller, app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>) {
         let theme = Theme::new();
         
-        ui.heading("Settings");
-        ui.add_space(20.0);
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.heading("Settings");
+            ui.add_space(20.0);
         
         Self::draw_appearance_card(ui, &theme, config);
+        ui.add_space(16.0);
+        
+        Self::draw_vpn_settings_card(ui, &theme, config);
         ui.add_space(16.0);
         
         Self::draw_system_info_card(ui, &theme, system_info);
@@ -25,7 +29,8 @@ impl SettingsPanel {
         Self::draw_updates_card(ui, &theme, app_updater, update_info);
         ui.add_space(16.0);
         
-        Self::draw_about_card(ui, &theme);
+            Self::draw_about_card(ui, &theme);
+        });
     }
     
     fn draw_appearance_card(ui: &mut egui::Ui, theme: &Theme, config: &mut Config) {
@@ -48,6 +53,20 @@ impl SettingsPanel {
         });
     }
     
+    fn draw_vpn_settings_card(ui: &mut egui::Ui, theme: &Theme, config: &mut Config) {
+        Card::show(ui, theme, "VPN Settings", |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Auto-connect to VPN on startup:");
+                ui.add_space(12.0);
+                
+                ui.checkbox(&mut config.auto_connect_vpn, "Enable auto-connect");
+            });
+            
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new("Auto-connect will use the first available VPN configuration").color(theme.text_secondary));
+        });
+    }
+    
     fn draw_system_info_card(ui: &mut egui::Ui, theme: &Theme, system_info: &SystemInfo) {
         Card::show(ui, theme, "System Information", |ui| {
             ui.horizontal(|ui| {
@@ -64,13 +83,16 @@ impl SettingsPanel {
                     crate::system::PackageManager::Yum => "YUM (CentOS/RHEL)",
                     crate::system::PackageManager::Zypper => "Zypper (openSUSE)",
                     crate::system::PackageManager::Unknown => "Unknown",
+                    crate::system::PackageManager::Chocolatey => "Chocolatey (Windows)",
+                    crate::system::PackageManager::Scoop => "Scoop (Windows)",
+                    crate::system::PackageManager::Winget => "Winget (Windows)",
                 };
                 ui.label(egui::RichText::new(pm_name).color(theme.text_secondary));
             });
         });
     }
     
-    fn draw_dependencies_card(ui: &mut egui::Ui, theme: &Theme, system_info: &SystemInfo, package_installer: &PackageInstaller) {
+    fn draw_dependencies_card(ui: &mut egui::Ui, theme: &Theme, system_info: &mut SystemInfo, package_installer: &PackageInstaller) {
         Card::show(ui, theme, "Dependencies", |ui| {
             ui.label("System dependencies status:");
             ui.add_space(8.0);
@@ -88,7 +110,11 @@ impl SettingsPanel {
                         }
                     } else {
                         ui.label(egui::RichText::new("✗ Missing").color(theme.error));
-                        missing_packages.push(dep.package_name.clone());
+                        
+                        // Only add to missing packages if it's not a built-in tool
+                        if dep.package_name != "builtin" {
+                            missing_packages.push(dep.package_name.clone());
+                        }
                         
                         if dep.required {
                             ui.label(egui::RichText::new("(Required)").color(theme.error));
@@ -96,6 +122,17 @@ impl SettingsPanel {
                     }
                 });
             }
+            
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if GlassButton::show(ui, theme, "Refresh Dependencies", true).clicked() {
+                    // Live refresh dependencies
+                    if let Err(e) = system_info.refresh_dependencies() {
+                        log::error!("Failed to refresh dependencies: {}", e);
+                    }
+                }
+                ui.label(egui::RichText::new("Click refresh after installing new dependencies").color(theme.text_secondary));
+            });
             
             if !missing_packages.is_empty() {
                 ui.add_space(12.0);
@@ -110,15 +147,79 @@ impl SettingsPanel {
                 
                 ui.add_space(8.0);
                 
-                if GlassButton::show(ui, theme, "Install Missing Dependencies", true).clicked() {
-                    // This would trigger the installation process
-                    // For now, just show the command
+                ui.horizontal(|ui| {
+                    if GlassButton::show(ui, theme, "Copy Install Command", true).clicked() {
+                        ui.output_mut(|o| o.copied_text = install_command.clone());
+                    }
+                    
+                    if GlassButton::show(ui, theme, "Open Terminal/PowerShell", true).clicked() {
+                        // Open terminal with the command ready to run
+                        #[cfg(windows)]
+                        {
+                            let _ = std::process::Command::new("cmd")
+                                .args(&["/c", "start", "cmd"])
+                                .spawn();
+                        }
+                        
+                        #[cfg(unix)]
+                        {
+                            let _ = std::process::Command::new("gnome-terminal")
+                                .spawn()
+                                .or_else(|_| std::process::Command::new("xterm").spawn())
+                                .or_else(|_| std::process::Command::new("konsole").spawn());
+                        }
+                    }
+                });
+                
+                // Show package manager installation help for Windows
+                if install_command.contains("# No package manager found") {
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    
+                    ui.label(egui::RichText::new("No package manager detected. Install one first:").strong());
+                    ui.add_space(4.0);
+                    
+                    ui.horizontal(|ui| {
+                        if GlassButton::show(ui, theme, "Install Winget", true).clicked() {
+                            #[cfg(windows)]
+                            {
+                                let _ = std::process::Command::new("cmd")
+                                    .args(&["/c", "start", "https://aka.ms/getwinget"])
+                                    .spawn();
+                            }
+                        }
+                        
+                        if GlassButton::show(ui, theme, "Install Chocolatey", true).clicked() {
+                            #[cfg(windows)]
+                            {
+                                let _ = std::process::Command::new("cmd")
+                                    .args(&["/c", "start", "https://chocolatey.org/install"])
+                                    .spawn();
+                            }
+                        }
+                        
+                        if GlassButton::show(ui, theme, "Install Scoop", true).clicked() {
+                            #[cfg(windows)]
+                            {
+                                let _ = std::process::Command::new("cmd")
+                                    .args(&["/c", "start", "https://scoop.sh/"])
+                                    .spawn();
+                            }
+                        }
+                    });
+                    
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Or download directly from the links shown above").color(theme.text_secondary));
+                } else {
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Copy the command above and run it in your terminal/PowerShell as administrator").color(theme.text_secondary));
                 }
             }
         });
     }
     
-    fn draw_updates_card(ui: &mut egui::Ui, theme: &Theme, app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>) {
+    fn draw_updates_card(ui: &mut egui::Ui, theme: &Theme, _app_updater: &AppUpdater, update_info: &mut Option<UpdateInfo>) {
         Card::show(ui, theme, "Updates", |ui| {
             ui.horizontal(|ui| {
                 ui.label("Current Version:");

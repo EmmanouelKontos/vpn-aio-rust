@@ -25,6 +25,9 @@ impl PackageInstaller {
             PackageManager::Yum => self.install_yum(packages).await,
             PackageManager::Zypper => self.install_zypper(packages).await,
             PackageManager::Unknown => Err(anyhow::anyhow!("Unknown package manager")),
+            PackageManager::Chocolatey => self.install_chocolatey(packages).await,
+            PackageManager::Scoop => self.install_scoop(packages).await,
+            PackageManager::Winget => self.install_winget(packages).await
         }
     }
     
@@ -84,6 +87,36 @@ impl PackageInstaller {
             }
             PackageManager::Unknown => {
                 return Err(anyhow::anyhow!("Unknown package manager"));
+            }
+            PackageManager::Chocolatey => {
+                let output = Command::new("choco")
+                    .args(&["upgrade", "all", "-y"])
+                    .output()?;
+                
+                if !output.status.success() {
+                    return Err(anyhow::anyhow!("Failed to update chocolatey: {}", 
+                        String::from_utf8_lossy(&output.stderr)));
+                }
+            }
+            PackageManager::Scoop => {
+                let output = Command::new("scoop")
+                    .arg("update")
+                    .output()?;
+                
+                if !output.status.success() {
+                    return Err(anyhow::anyhow!("Failed to update scoop: {}", 
+                        String::from_utf8_lossy(&output.stderr)));
+                }
+            }
+            PackageManager::Winget => {
+                let output = Command::new("winget")
+                    .args(&["upgrade", "--all"])
+                    .output()?;
+                
+                if !output.status.success() {
+                    return Err(anyhow::anyhow!("Failed to update winget: {}", 
+                        String::from_utf8_lossy(&output.stderr)));
+                }
             }
         }
         
@@ -180,6 +213,54 @@ impl PackageInstaller {
         Ok(())
     }
     
+    async fn install_chocolatey(&self, packages: &[String]) -> Result<()> {
+        let mut args = vec!["install", "-y"];
+        for package in packages {
+            args.push(package);
+        }
+        
+        let output = Command::new("choco")
+            .args(&args)
+            .output()?;
+        
+        if !output.status.success() {
+            return Err(anyhow::anyhow!("Failed to install packages: {}", 
+                String::from_utf8_lossy(&output.stderr)));
+        }
+        
+        Ok(())
+    }
+    
+    async fn install_scoop(&self, packages: &[String]) -> Result<()> {
+        for package in packages {
+            let output = Command::new("scoop")
+                .args(&["install", package])
+                .output()?;
+            
+            if !output.status.success() {
+                return Err(anyhow::anyhow!("Failed to install package {}: {}", 
+                    package, String::from_utf8_lossy(&output.stderr)));
+            }
+        }
+        
+        Ok(())
+    }
+    
+    async fn install_winget(&self, packages: &[String]) -> Result<()> {
+        for package in packages {
+            let output = Command::new("winget")
+                .args(&["install", "--id", package, "--silent", "--accept-source-agreements", "--accept-package-agreements"])
+                .output()?;
+            
+            if !output.status.success() {
+                return Err(anyhow::anyhow!("Failed to install package {}: {}", 
+                    package, String::from_utf8_lossy(&output.stderr)));
+            }
+        }
+        
+        Ok(())
+    }
+    
     pub fn get_install_command(&self, packages: &[String]) -> String {
         match self.package_manager {
             PackageManager::Apt => format!("sudo apt install -y {}", packages.join(" ")),
@@ -187,7 +268,49 @@ impl PackageInstaller {
             PackageManager::Dnf => format!("sudo dnf install -y {}", packages.join(" ")),
             PackageManager::Yum => format!("sudo yum install -y {}", packages.join(" ")),
             PackageManager::Zypper => format!("sudo zypper install -y {}", packages.join(" ")),
-            PackageManager::Unknown => "Unknown package manager".to_string(),
+            PackageManager::Chocolatey => format!("choco install -y {}", packages.join(" ")),
+            PackageManager::Scoop => format!("scoop install {}", packages.join(" ")),
+            PackageManager::Winget => format!("winget install {}", packages.join(" ")),
+            PackageManager::Unknown => {
+                #[cfg(windows)]
+                {
+                    // Provide alternative Windows installation methods
+                    let mut commands = Vec::new();
+                    
+                    // Check if any package managers are available
+                    if which::which("winget").is_ok() {
+                        let winget_packages: Vec<String> = packages.iter().map(|p| {
+                            match p.as_str() {
+                                "openvpn" => "OpenVPN.OpenVPN".to_string(),
+                                "wireguard" => "WireGuard.WireGuard".to_string(),
+                                _ => p.clone()
+                            }
+                        }).collect();
+                        commands.push(format!("winget install {}", winget_packages.join(" ")));
+                    } else if which::which("choco").is_ok() {
+                        commands.push(format!("choco install -y {}", packages.join(" ")));
+                    } else if which::which("scoop").is_ok() {
+                        commands.push(format!("scoop install {}", packages.join(" ")));
+                    } else {
+                        // No package manager found, provide manual download instructions
+                        commands.push("# No package manager found. Manual installation required:".to_string());
+                        for package in packages {
+                            match package.as_str() {
+                                "openvpn" => commands.push("# OpenVPN: Download from https://openvpn.net/community-downloads/".to_string()),
+                                "wireguard" => commands.push("# WireGuard: Download from https://www.wireguard.com/install/".to_string()),
+                                _ => commands.push(format!("# {}: Search for official installer", package)),
+                            }
+                        }
+                    }
+                    
+                    commands.join("\n")
+                }
+                
+                #[cfg(unix)]
+                {
+                    "No package manager detected. Please install packages manually.".to_string()
+                }
+            }
         }
     }
 }

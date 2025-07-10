@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use eframe::egui;
 use log::{info, error, warn};
 use std::panic;
@@ -11,9 +13,38 @@ use ui::App;
 
 fn main() -> eframe::Result<()> {
     // Initialize logging with better configuration
-    env_logger::Builder::from_default_env()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    // In release mode on Windows, log to file instead of console
+    #[cfg(all(windows, not(debug_assertions)))]
+    {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        
+        // Create logs directory
+        let log_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::env::current_dir().unwrap())
+            .join("vpn-manager");
+        std::fs::create_dir_all(&log_dir).ok();
+        
+        // Set up file logging
+        let log_file = log_dir.join("vpn-manager.log");
+        env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Info)
+            .target(env_logger::Target::Pipe(Box::new(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_file)
+                    .unwrap()
+            )))
+            .init();
+    }
+    
+    #[cfg(not(all(windows, not(debug_assertions))))]
+    {
+        env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Info)
+            .init();
+    }
     
     // Set up panic handler for better error reporting
     panic::set_hook(Box::new(|panic_info| {
@@ -70,13 +101,16 @@ fn main() -> eframe::Result<()> {
 
 fn check_system_requirements() -> Result<(), String> {
     // Check if we're on a supported platform
-    if !cfg!(target_os = "linux") {
-        return Err("This application currently only supports Linux".to_string());
+    if !cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos")) {
+        return Err("This application currently supports Linux, Windows, and macOS".to_string());
     }
 
-    // Check if we have a display
-    if std::env::var("DISPLAY").is_err() && std::env::var("WAYLAND_DISPLAY").is_err() {
-        warn!("No display environment detected. Running in headless mode may not work.");
+    // Check if we have a display (Linux/Unix specific)
+    #[cfg(unix)]
+    {
+        if std::env::var("DISPLAY").is_err() && std::env::var("WAYLAND_DISPLAY").is_err() {
+            warn!("No display environment detected. Running in headless mode may not work.");
+        }
     }
 
     Ok(())

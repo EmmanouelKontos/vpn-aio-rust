@@ -1,9 +1,6 @@
 use crate::config::{RdpConfig, VpnConfig, VpnType, WolDevice};
 use anyhow::Result;
-use std::process::Command;
 use std::time::Duration;
-use tokio::time::sleep;
-use wake_on_lan::MagicPacket;
 
 pub mod monitor;
 pub mod vpn;
@@ -90,6 +87,13 @@ impl NetworkManager {
                 self.vpn_status = VpnStatus::Error(e.to_string());
                 Err(e)
             }
+        }
+    }
+
+    pub async fn check_vpn_status(&mut self, config: &VpnConfig) -> Result<bool> {
+        match config.vpn_type {
+            VpnType::OpenVpn => vpn::check_connection_status().await,
+            VpnType::WireGuard => wireguard::check_connection_status(config).await,
         }
     }
 

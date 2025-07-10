@@ -1,7 +1,7 @@
 use eframe::egui;
 use crate::config::Config;
 use crate::network::{NetworkManager, VpnStatus};
-use crate::ui::components::{Card, GlassButton, StatusIndicator};
+use crate::ui::components::{Card, StatusIndicator, GlassButton};
 use crate::ui::theme::Theme;
 
 pub struct HomePanel;
@@ -21,7 +21,7 @@ impl HomePanel {
         Self::draw_remote_devices(ui, &theme, config, network_manager);
     }
     
-    fn draw_vpn_overview(ui: &mut egui::Ui, theme: &Theme, config: &Config, network_manager: &NetworkManager) {
+    fn draw_vpn_overview(ui: &mut egui::Ui, theme: &Theme, config: &Config, network_manager: &mut NetworkManager) {
         Card::show(ui, theme, "VPN Status", |ui| {
             ui.horizontal(|ui| {
                 // VPN Status
@@ -44,6 +44,68 @@ impl HomePanel {
                     ui.label(egui::RichText::new(format!("{} VPN configs", config.vpn_configs.len())).color(theme.text_secondary));
                 });
             });
+            
+            // VPN Connection Controls
+            if !config.vpn_configs.is_empty() {
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(8.0);
+                
+                ui.horizontal(|ui| {
+                    ui.label("Quick Connect:");
+                    ui.add_space(8.0);
+                    
+                    // VPN selector
+                    let mut selected_vpn = None;
+                    for (index, vpn_config) in config.vpn_configs.iter().enumerate() {
+                        if ui.selectable_label(false, &vpn_config.name).clicked() {
+                            selected_vpn = Some(index);
+                        }
+                    }
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Connect/Disconnect button
+                        let is_connected = matches!(&network_manager.vpn_status, VpnStatus::Connected(_));
+                        let is_connecting = matches!(&network_manager.vpn_status, VpnStatus::Connecting);
+                        
+                        if is_connected {
+                            if ui.add(egui::Button::new("Disconnect")
+                                .fill(theme.error)
+                                .min_size(egui::vec2(80.0, 28.0))).clicked() {
+                                if let Some(vpn_config) = config.vpn_configs.first() {
+                                    let runtime = tokio::runtime::Runtime::new().unwrap();
+                                    runtime.block_on(async {
+                                        let _ = network_manager.disconnect_vpn(vpn_config).await;
+                                    });
+                                }
+                            }
+                        } else if !config.vpn_configs.is_empty() {
+                            let button_text = if is_connecting { "Connecting..." } else { "Connect" };
+                            let button_enabled = !is_connecting;
+                            
+                            if ui.add_enabled(button_enabled, egui::Button::new(button_text)
+                                .fill(theme.primary)
+                                .min_size(egui::vec2(80.0, 28.0))).clicked() {
+                                if let Some(vpn_config) = config.vpn_configs.first() {
+                                    let runtime = tokio::runtime::Runtime::new().unwrap();
+                                    runtime.block_on(async {
+                                        let _ = network_manager.connect_vpn(vpn_config).await;
+                                    });
+                                }
+                            }
+                        }
+                    });
+                    
+                    if let Some(selected_index) = selected_vpn {
+                        if let Some(vpn_config) = config.vpn_configs.get(selected_index) {
+                            let runtime = tokio::runtime::Runtime::new().unwrap();
+                            runtime.block_on(async {
+                                let _ = network_manager.connect_vpn(vpn_config).await;
+                            });
+                        }
+                    }
+                });
+            }
         });
     }
     
@@ -60,7 +122,7 @@ impl HomePanel {
             let available_width = ui.available_width();
             let card_width = 200.0;
             let cards_per_row = (available_width / (card_width + 16.0)).floor() as usize;
-            let cards_per_row = cards_per_row.max(1);
+            let _cards_per_row = cards_per_row.max(1);
             
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(16.0, 16.0);

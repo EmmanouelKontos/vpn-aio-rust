@@ -1,7 +1,7 @@
 use eframe::egui;
 use crate::config::{Config, VpnConfig, VpnType};
 use crate::network::{NetworkManager, VpnStatus};
-use crate::ui::components::{Card, GlassButton, InputField, StatusIndicator};
+use crate::ui::components::{Card, GlassButton, StatusIndicator};
 use crate::ui::theme::Theme;
 
 pub struct VpnPanel;
@@ -74,6 +74,20 @@ impl VpnPanel {
                             &network_manager.vpn_status,
                             VpnStatus::Connected(name) if name == &vpn_config.name
                         );
+                        
+                        // Show connection status for WireGuard
+                        if vpn_config.vpn_type == VpnType::WireGuard {
+                            let runtime = tokio::runtime::Runtime::new().unwrap();
+                            let is_actually_connected = runtime.block_on(async {
+                                network_manager.check_vpn_status(vpn_config).await.unwrap_or(false)
+                            });
+                            
+                            if is_actually_connected && !is_connected {
+                                network_manager.vpn_status = VpnStatus::Connected(vpn_config.name.clone());
+                            } else if !is_actually_connected && is_connected {
+                                network_manager.vpn_status = VpnStatus::Disconnected;
+                            }
+                        }
                         
                         let is_connecting = matches!(
                             &network_manager.vpn_status,

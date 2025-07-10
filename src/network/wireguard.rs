@@ -2,6 +2,12 @@ use crate::config::VpnConfig;
 use anyhow::Result;
 use tokio::process::Command;
 use std::path::Path;
+use which;
+
+pub async fn check_connection_status(config: &VpnConfig) -> Result<bool> {
+    let interface_name = get_interface_from_config(&config.config_path).await?;
+    get_status(&interface_name).await
+}
 
 pub async fn connect(config: &VpnConfig) -> Result<()> {
     // Check if config file exists
@@ -9,6 +15,62 @@ pub async fn connect(config: &VpnConfig) -> Result<()> {
         return Err(anyhow::anyhow!("WireGuard config file not found: {}", config.config_path));
     }
     
+    #[cfg(windows)]
+    {
+        connect_windows(config).await
+    }
+    
+    #[cfg(unix)]
+    {
+        connect_unix(config).await
+    }
+}
+
+#[cfg(windows)]
+pub async fn connect_windows(config: &VpnConfig) -> Result<()> {
+    // Find WireGuard executable
+    let wireguard_paths = vec![
+        "C:\\Program Files\\WireGuard\\wireguard.exe",
+        "C:\\Program Files (x86)\\WireGuard\\wireguard.exe",
+    ];
+    
+    let mut wireguard_exe = None;
+    for path in &wireguard_paths {
+        if std::path::Path::new(path).exists() {
+            wireguard_exe = Some(path.to_string());
+            break;
+        }
+    }
+    
+    // Fallback to PATH
+    if wireguard_exe.is_none() {
+        if which::which("wireguard").is_ok() {
+            wireguard_exe = Some("wireguard".to_string());
+        }
+    }
+    
+    let wireguard_exe = wireguard_exe.ok_or_else(|| {
+        anyhow::anyhow!("WireGuard executable not found. Please install WireGuard from https://www.wireguard.com/install/")
+    })?;
+    
+    // On Windows, use the WireGuard service
+    let output = Command::new(&wireguard_exe)
+        .args(&["/installtunnelservice", &config.config_path])
+        .output()
+        .await?;
+    
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to start WireGuard: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    
+    Ok(())
+}
+
+#[cfg(unix)]
+pub async fn connect_unix(config: &VpnConfig) -> Result<()> {
     // Use wg-quick to bring up the interface
     let output = Command::new("sudo")
         .args(&["wg-quick", "up", &config.config_path])
@@ -26,6 +88,63 @@ pub async fn connect(config: &VpnConfig) -> Result<()> {
 }
 
 pub async fn disconnect(config: &VpnConfig) -> Result<()> {
+    #[cfg(windows)]
+    {
+        disconnect_windows(config).await
+    }
+    
+    #[cfg(unix)]
+    {
+        disconnect_unix(config).await
+    }
+}
+
+#[cfg(windows)]
+pub async fn disconnect_windows(config: &VpnConfig) -> Result<()> {
+    let interface_name = get_interface_from_config(&config.config_path).await?;
+    
+    // Find WireGuard executable
+    let wireguard_paths = vec![
+        "C:\\Program Files\\WireGuard\\wireguard.exe",
+        "C:\\Program Files (x86)\\WireGuard\\wireguard.exe",
+    ];
+    
+    let mut wireguard_exe = None;
+    for path in &wireguard_paths {
+        if std::path::Path::new(path).exists() {
+            wireguard_exe = Some(path.to_string());
+            break;
+        }
+    }
+    
+    // Fallback to PATH
+    if wireguard_exe.is_none() {
+        if which::which("wireguard").is_ok() {
+            wireguard_exe = Some("wireguard".to_string());
+        }
+    }
+    
+    let wireguard_exe = wireguard_exe.ok_or_else(|| {
+        anyhow::anyhow!("WireGuard executable not found. Please install WireGuard from https://www.wireguard.com/install/")
+    })?;
+    
+    let output = Command::new(&wireguard_exe)
+        .args(&["/uninstalltunnelservice", &interface_name])
+        .output()
+        .await?;
+    
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "Failed to stop WireGuard: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    
+    Ok(())
+}
+
+#[cfg(unix)]
+pub async fn disconnect_unix(config: &VpnConfig) -> Result<()> {
     // Use wg-quick to bring down the interface
     let output = Command::new("sudo")
         .args(&["wg-quick", "down", &config.config_path])
@@ -43,6 +162,29 @@ pub async fn disconnect(config: &VpnConfig) -> Result<()> {
 }
 
 pub async fn get_status(interface_name: &str) -> Result<bool> {
+    #[cfg(windows)]
+    {
+        get_status_windows(interface_name).await
+    }
+    
+    #[cfg(unix)]
+    {
+        get_status_unix(interface_name).await
+    }
+}
+
+#[cfg(windows)]
+pub async fn get_status_windows(interface_name: &str) -> Result<bool> {
+    let output = Command::new("wg")
+        .args(&["show", interface_name])
+        .output()
+        .await?;
+    
+    Ok(output.status.success())
+}
+
+#[cfg(unix)]
+pub async fn get_status_unix(interface_name: &str) -> Result<bool> {
     let output = Command::new("wg")
         .args(&["show", interface_name])
         .output()
@@ -76,6 +218,44 @@ pub async fn get_interface_from_config(config_path: &str) -> Result<String> {
 }
 
 pub async fn list_interfaces() -> Result<Vec<String>> {
+    #[cfg(windows)]
+    {
+        list_interfaces_windows().await
+    }
+    
+    #[cfg(unix)]
+    {
+        list_interfaces_unix().await
+    }
+}
+
+#[cfg(windows)]
+pub async fn list_interfaces_windows() -> Result<Vec<String>> {
+    let output = Command::new("wg")
+        .arg("show")
+        .output()
+        .await?;
+    
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    let mut interfaces = Vec::new();
+    
+    for line in output_str.lines() {
+        if line.starts_with("interface: ") {
+            if let Some(interface) = line.strip_prefix("interface: ") {
+                interfaces.push(interface.to_string());
+            }
+        }
+    }
+    
+    Ok(interfaces)
+}
+
+#[cfg(unix)]
+pub async fn list_interfaces_unix() -> Result<Vec<String>> {
     let output = Command::new("wg")
         .arg("show")
         .output()
@@ -100,22 +280,45 @@ pub async fn list_interfaces() -> Result<Vec<String>> {
 }
 
 pub fn get_available_configs() -> Result<Vec<String>> {
-    let home_dir = std::env::var("HOME").unwrap_or_default();
-    let user_config_dir = format!("{}/.config/wireguard", home_dir);
-    
-    let config_dirs = vec![
-        "/etc/wireguard",
-        &user_config_dir,
-    ];
-    
     let mut configs = Vec::new();
     
-    for config_dir in config_dirs {
-        if let Ok(entries) = std::fs::read_dir(config_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().and_then(|s| s.to_str()) == Some("conf") {
-                    configs.push(path.to_string_lossy().to_string());
+    #[cfg(windows)]
+    {
+        let appdata_config = format!("{}\\WireGuard", std::env::var("APPDATA").unwrap_or_default());
+        let config_dirs = vec![
+            "C:\\Program Files\\WireGuard\\Data\\Configurations",
+            &appdata_config,
+        ];
+        
+        for config_dir in config_dirs {
+            if let Ok(entries) = std::fs::read_dir(config_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("conf") {
+                        configs.push(path.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+    
+    #[cfg(unix)]
+    {
+        let home_dir = std::env::var("HOME").unwrap_or_default();
+        let user_config_dir = format!("{}/.config/wireguard", home_dir);
+        
+        let config_dirs = vec![
+            "/etc/wireguard",
+            &user_config_dir,
+        ];
+        
+        for config_dir in config_dirs {
+            if let Ok(entries) = std::fs::read_dir(config_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|s| s.to_str()) == Some("conf") {
+                        configs.push(path.to_string_lossy().to_string());
+                    }
                 }
             }
         }

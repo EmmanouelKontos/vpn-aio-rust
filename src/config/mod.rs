@@ -48,6 +48,8 @@ pub struct Config {
     pub rdp_configs: Vec<RdpConfig>,
     pub wol_devices: Vec<WolDevice>,
     pub dark_mode: bool,
+    #[serde(default)]
+    pub auto_connect_vpn: bool,
 }
 
 impl Default for Config {
@@ -57,6 +59,7 @@ impl Default for Config {
             rdp_configs: Vec::new(),
             wol_devices: Vec::new(),
             dark_mode: true,
+            auto_connect_vpn: false,
         }
     }
 }

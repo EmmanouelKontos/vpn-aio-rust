@@ -3,6 +3,10 @@ name = "vpn-manager"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "vpn-manager"
+path = "src/main.rs"
+
 [dependencies]
 eframe = "0.29"
 egui = "0.29"
@@ -23,3 +27,11 @@ regex = "1.0"
 which = "6.0"
 sudo = "0.6"
 rfd = "0.15"
+sysinfo = "0.30"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_System_Registry", "Win32_NetworkManagement_IpHelper"] }
+
+[target.'cfg(unix)'.dependencies]
+nix = "0.29"

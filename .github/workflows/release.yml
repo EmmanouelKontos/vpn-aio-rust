@@ -8,7 +8,20 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: vpn-manager-linux-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: vpn-manager-windows-x86_64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            name: vpn-manager-macos-x86_64
+    
+    runs-on: ${{ matrix.os }}
     
     steps:
     - uses: actions/checkout@v4
@@ -18,24 +31,55 @@ jobs:
       with:
         toolchain: stable
         override: true
+        target: ${{ matrix.target }}
     
-    - name: Install system dependencies
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
         sudo apt-get install -y libgtk-3-dev libx11-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
     
     - name: Build release
-      run: cargo build --release
+      run: cargo build --release --target ${{ matrix.target }}
+    
+    - name: Rename binary (Unix)
+      if: matrix.os != 'windows-latest'
+      run: |
+        mv target/${{ matrix.target }}/release/vpn-manager target/${{ matrix.target }}/release/${{ matrix.name }}
+    
+    - name: Rename binary (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        move target\${{ matrix.target }}\release\vpn-manager.exe target\${{ matrix.target }}\release\${{ matrix.name }}
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.name }}
+        path: target/${{ matrix.target }}/release/${{ matrix.name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
     
     - name: Create release
       uses: softprops/action-gh-release@v1
-      if: startsWith(github.ref, 'refs/tags/')
       with:
         files: |
-          target/release/vpn-manager
+          artifacts/vpn-manager-linux-x86_64/vpn-manager-linux-x86_64
+          artifacts/vpn-manager-windows-x86_64.exe/vpn-manager-windows-x86_64.exe
+          artifacts/vpn-manager-macos-x86_64/vpn-manager-macos-x86_64
         body: |
           ## Changes
           
+          - Cross-platform support for Linux, Windows, and macOS
           - Enhanced UI with animations and loading states
           - Improved error handling and stability
           - Better VPN configuration management
@@ -45,13 +89,21 @@ jobs:
           
           ## Installation
           
-          Download the `vpn-manager` binary, make it executable, and run:
-          
+          ### Linux
+          Download `vpn-manager-linux-x86_64`, make it executable, and run:
           ```bash
-          chmod +x vpn-manager
-          ./vpn-manager
+          chmod +x vpn-manager-linux-x86_64
+          ./vpn-manager-linux-x86_64
           ```
           
-          For detailed installation instructions, see the [README](https://github.com/emmanouil/vpn-aio/blob/main/README.md).
+          ### Windows
+          Download `vpn-manager-windows-x86_64.exe` and run it.
+          
+          ### macOS
+          Download `vpn-manager-macos-x86_64`, make it executable, and run:
+          ```bash
+          chmod +x vpn-manager-macos-x86_64
+          ./vpn-manager-macos-x86_64
+          ```
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

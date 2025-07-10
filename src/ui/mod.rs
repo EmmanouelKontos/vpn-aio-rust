@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, FontFamily, FontId, Rounding, Stroke, TextStyle};
+use eframe::egui::{self, FontFamily, FontId, Rounding, Stroke, TextStyle};
 use crate::config::{Config, VpnType};
 use crate::network::NetworkManager;
 use crate::system::{SystemInfo, installer::PackageInstaller, updater::{AppUpdater, UpdateInfo}};
@@ -79,7 +79,7 @@ impl App {
         info!("Initializing network manager...");
         let network_manager = NetworkManager::new();
         
-        let app = Self {
+        let mut app = Self {
             config,
             network_manager,
             theme: Theme::new(),
@@ -112,6 +112,17 @@ impl App {
             loading_actions: std::collections::HashSet::new(),
             animation_time: 0.0,
         };
+
+        // Auto-connect to VPN if enabled
+        if app.config.auto_connect_vpn && !app.config.vpn_configs.is_empty() {
+            info!("Auto-connecting to VPN...");
+            if let Some(vpn_config) = app.config.vpn_configs.first() {
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                let _ = runtime.block_on(async {
+                    app.network_manager.connect_vpn(vpn_config).await
+                });
+            }
+        }
 
         info!("Setting up fonts and styles...");
         app.setup_fonts(cc);
@@ -241,7 +252,7 @@ impl App {
                     &mut self.new_wol_ip, &mut self.new_wol_port);
             }
             Panel::Settings => {
-                SettingsPanel::draw(ui, &mut self.config, &self.system_info, &self.package_installer, &self.app_updater, &mut self.update_info);
+                SettingsPanel::draw(ui, &mut self.config, &mut self.system_info, &self.package_installer, &self.app_updater, &mut self.update_info);
             }
         }
     }

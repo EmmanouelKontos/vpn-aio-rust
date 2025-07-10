@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo check:*)",
+      "Bash(cargo:*)",
+      "Bash(./build.sh)",
+      "Bash(sudo apt:*)",
+      "Bash(sudo apt install:*)",
+      "Bash(apt:*)",
+      "Bash(apt install:*)",
+      "Bash(echo $PATH)",
+      "Bash(chmod:*)",
+      "Bash(bash:*)",
+      "Bash(dos2unix:*)",
+      "Bash(sed:*)",
+      "Bash(\"/mnt/c/Users/FRONTDESK_PC/.cargo/bin/cargo.exe\" --version)",
+      "Bash(grep:*)"
+    ],
+    "deny": []
+  }
+}
