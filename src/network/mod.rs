@@ -8,6 +8,7 @@ pub mod wireguard;
 pub mod rdp;
 pub mod wol;
 
+#[derive(Clone)]
 pub struct NetworkManager {
     pub vpn_status: VpnStatus,
     pub rdp_connections: Vec<RdpConnection>,

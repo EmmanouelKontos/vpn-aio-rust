@@ -3,12 +3,36 @@ use crate::config::{Config, VpnType};
 use crate::network::NetworkManager;
 use crate::system::{SystemInfo, installer::PackageInstaller, updater::{AppUpdater, UpdateInfo}};
 
+#[derive(Debug, Clone)]
+pub enum DeviceOperationState {
+    Idle,
+    Loading,
+    Success(String),
+    Error(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct DeviceOperationResult {
+    pub device_name: String,
+    pub operation: String,
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum DeviceOperationType {
+    Wake(crate::config::WolDevice),
+    Ping(crate::config::WolDevice),
+    RdpConnect(crate::config::RdpConfig),
+}
+
 pub mod theme;
 pub mod components;
 pub mod panels;
 
 use theme::Theme;
 use panels::{HomePanel, VpnPanel, RemotePanel, SettingsPanel};
+use components::{ModernButton, Spacing, Typography};
 
 pub struct App {
     config: Config,
@@ -48,6 +72,11 @@ pub struct App {
     update_progress: String,
     update_notification: Option<String>,
     last_update_check: std::time::Instant,
+    update_check_receiver: Option<std::sync::mpsc::Receiver<Result<crate::system::updater::UpdateInfo, String>>>,
+    update_check_timeout: std::time::Instant,
+    // Device operation feedback
+    device_operations: std::collections::HashMap<String, DeviceOperationState>,
+    device_feedback_receiver: Option<std::sync::mpsc::Receiver<DeviceOperationResult>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +158,11 @@ impl App {
             update_progress: String::new(),
             update_notification: None,
             last_update_check: std::time::Instant::now(),
+            update_check_receiver: None,
+            update_check_timeout: std::time::Instant::now(),
+            // Initialize device operation states
+            device_operations: std::collections::HashMap::new(),
+            device_feedback_receiver: None,
         };
 
         // Auto-connect to VPN if enabled
@@ -196,21 +230,38 @@ impl App {
         style.visuals.widgets.hovered.weak_bg_fill = self.theme.hover_bg;
         style.visuals.widgets.active.weak_bg_fill = self.theme.selection_bg;
         
-        // Text input colors
+        // Enhanced text input styling
         style.visuals.widgets.inactive.bg_fill = self.theme.surface_variant;
         style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, self.theme.border);
         style.visuals.widgets.inactive.fg_stroke.color = self.theme.text_primary;
-        style.visuals.widgets.inactive.rounding = Rounding::same(6.0);
+        style.visuals.widgets.inactive.rounding = Rounding::same(8.0);
+        style.visuals.widgets.inactive.expansion = 4.0;
         
-        style.visuals.widgets.hovered.bg_fill = self.theme.hover_bg;
-        style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, self.theme.primary);
+        style.visuals.widgets.hovered.bg_fill = self.theme.surface_variant;
+        style.visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, self.theme.primary);
         style.visuals.widgets.hovered.fg_stroke.color = self.theme.text_primary;
-        style.visuals.widgets.hovered.rounding = Rounding::same(6.0);
+        style.visuals.widgets.hovered.rounding = Rounding::same(8.0);
+        style.visuals.widgets.hovered.expansion = 4.0;
         
-        style.visuals.widgets.active.bg_fill = self.theme.selection_bg;
+        style.visuals.widgets.active.bg_fill = self.theme.surface_variant;
         style.visuals.widgets.active.bg_stroke = Stroke::new(2.0, self.theme.primary);
-        style.visuals.widgets.active.fg_stroke.color = self.theme.selection_text;
-        style.visuals.widgets.active.rounding = Rounding::same(6.0);
+        style.visuals.widgets.active.fg_stroke.color = self.theme.text_primary;
+        style.visuals.widgets.active.rounding = Rounding::same(8.0);
+        style.visuals.widgets.active.expansion = 4.0;
+        
+        // Better button styling
+        style.visuals.widgets.noninteractive.bg_fill = self.theme.surface_variant;
+        style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, self.theme.border);
+        style.visuals.widgets.noninteractive.fg_stroke.color = self.theme.text_primary;
+        style.visuals.widgets.noninteractive.rounding = Rounding::same(6.0);
+        
+        // Improved spacing
+        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
+        style.spacing.button_padding = egui::vec2(12.0, 8.0);
+        style.spacing.menu_margin = egui::Margin::same(8.0);
+        style.spacing.indent = 20.0;
+        style.spacing.combo_width = 100.0;
+        style.spacing.text_edit_width = 200.0;
         
         style.text_styles.insert(
             TextStyle::Heading,
@@ -223,6 +274,14 @@ impl App {
         style.text_styles.insert(
             TextStyle::Button,
             FontId::new(14.0, FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            TextStyle::Small,
+            FontId::new(12.0, FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            TextStyle::Monospace,
+            FontId::new(13.0, FontFamily::Monospace),
         );
 
         cc.egui_ctx.set_style(style);
@@ -259,6 +318,7 @@ impl App {
         }
         
         self.checking_updates = true;
+        self.update_check_timeout = std::time::Instant::now();
         let app_updater = self.app_updater.clone();
         
         // Use a channel to communicate results back
@@ -279,71 +339,223 @@ impl App {
             });
         });
         
-        // Store the receiver for later polling
-        // For now, we'll just log and continue
-        std::thread::spawn(move || {
-            if let Ok(result) = rx.recv() {
-                match result {
-                    Ok(info) => {
-                        if info.update_available {
-                            log::info!("Update available: {} -> {}", info.current_version, info.latest_version);
-                        } else {
-                            log::info!("No updates available, current version {} is latest", info.current_version);
+        // Store the receiver for polling in the main thread
+        self.update_check_receiver = Some(rx);
+    }
+    
+    fn poll_update_check(&mut self) {
+        if let Some(receiver) = &self.update_check_receiver {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    // Update check completed
+                    self.checking_updates = false;
+                    self.update_check_receiver = None;
+                    
+                    match result {
+                        Ok(info) => {
+                            if info.update_available {
+                                log::info!("Update available: {} -> {}", info.current_version, info.latest_version);
+                                self.update_info = Some(info.clone());
+                                self.update_notification = Some(format!("Update available: v{}", info.latest_version));
+                            } else {
+                                log::info!("No updates available, current version {} is latest", info.current_version);
+                                self.update_info = Some(info);
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to check for updates: {}", e);
                         }
                     }
-                    Err(e) => {
-                        log::warn!("Failed to check for updates: {}", e);
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still waiting for result, check for timeout
+                    if self.update_check_timeout.elapsed().as_secs() > 30 {
+                        log::warn!("Update check timed out after 30 seconds");
+                        self.checking_updates = false;
+                        self.update_check_receiver = None;
                     }
                 }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Channel disconnected, stop checking
+                    log::warn!("Update check channel disconnected");
+                    self.checking_updates = false;
+                    self.update_check_receiver = None;
+                }
             }
-        });
+        }
+    }
+    
+    fn start_device_operation(&mut self, device_name: String, operation: String, operation_type: DeviceOperationType) {
+        // Set device state to loading
+        self.device_operations.insert(
+            format!("{}_{}", device_name, operation), 
+            DeviceOperationState::Loading
+        );
+        
+        // Use a channel to communicate results back
+        use std::sync::mpsc;
+        let (tx, rx) = mpsc::channel();
+        
+        match operation_type {
+            DeviceOperationType::Wake(wol_device) => {
+                let mut network_manager = self.network_manager.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async {
+                        match network_manager.wake_device(&wol_device).await {
+                            Ok(_) => {
+                                let _ = tx.send(DeviceOperationResult {
+                                    device_name: device_name.clone(),
+                                    operation: operation.clone(),
+                                    success: true,
+                                    message: format!("Wake-on-LAN packet sent to {}", device_name),
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(DeviceOperationResult {
+                                    device_name: device_name.clone(),
+                                    operation: operation.clone(),
+                                    success: false,
+                                    message: format!("Failed to wake {}: {}", device_name, e),
+                                });
+                            }
+                        }
+                    });
+                });
+            }
+            DeviceOperationType::Ping(wol_device) => {
+                let mut network_manager = self.network_manager.clone();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async {
+                        let is_online = network_manager.check_device_status(&wol_device).await;
+                        let _ = tx.send(DeviceOperationResult {
+                            device_name: device_name.clone(),
+                            operation: operation.clone(),
+                            success: true,
+                            message: format!("{} is {}", device_name, if is_online { "online" } else { "offline" }),
+                        });
+                    });
+                });
+            }
+            DeviceOperationType::RdpConnect(rdp_config) => {
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async {
+                        match crate::network::rdp::connect(&rdp_config).await {
+                            Ok(_) => {
+                                let _ = tx.send(DeviceOperationResult {
+                                    device_name: device_name.clone(),
+                                    operation: operation.clone(),
+                                    success: true,
+                                    message: format!("RDP connection initiated to {}", device_name),
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(DeviceOperationResult {
+                                    device_name: device_name.clone(),
+                                    operation: operation.clone(),
+                                    success: false,
+                                    message: format!("Failed to connect to {}: {}", device_name, e),
+                                });
+                            }
+                        }
+                    });
+                });
+            }
+        }
+        
+        // Store the receiver for polling in the main thread
+        self.device_feedback_receiver = Some(rx);
+    }
+    
+    fn poll_device_operations(&mut self) {
+        if let Some(receiver) = &self.device_feedback_receiver {
+            match receiver.try_recv() {
+                Ok(result) => {
+                    // Operation completed
+                    let key = format!("{}_{}", result.device_name, result.operation);
+                    
+                    if result.success {
+                        self.device_operations.insert(key, DeviceOperationState::Success(result.message.clone()));
+                        self.connection_feedback = Some(result.message);
+                    } else {
+                        self.device_operations.insert(key, DeviceOperationState::Error(result.message.clone()));
+                        self.connection_feedback = Some(result.message);
+                    }
+                    
+                    // Reset the animation timer for feedback display
+                    self.animation_time = 0.0;
+                    
+                    // Keep the receiver for potential future operations
+                    // (Don't set to None like with update check)
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    // Still waiting for result, nothing to do
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    // Channel disconnected, reset
+                    self.device_feedback_receiver = None;
+                }
+            }
+        }
+    }
+    
+    fn get_device_operation_state(&self, device_name: &str, operation: &str) -> &DeviceOperationState {
+        let key = format!("{}_{}", device_name, operation);
+        self.device_operations.get(&key).unwrap_or(&DeviceOperationState::Idle)
     }
 
     fn draw_sidebar(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-            ui.add_space(20.0);
+            Spacing::md(ui);
             
             // Display logo if available
             if let Some(logo_texture) = &self.logo_texture {
                 ui.horizontal(|ui| {
-                    ui.add_space(10.0);
+                    Spacing::sm(ui);
                     ui.add(egui::Image::new(logo_texture)
-                        .max_width(60.0)
-                        .max_height(60.0)
-                        .rounding(egui::Rounding::same(8.0)));
-                    ui.add_space(10.0);
+                        .max_width(40.0)
+                        .max_height(40.0)
+                        .rounding(egui::Rounding::same(6.0)));
+                    Spacing::sm(ui);
                     ui.vertical(|ui| {
-                        ui.add_space(8.0);
-                        ui.strong("VPN Manager");
-                        ui.label("All-in-One");
+                        Typography::heading(ui, &self.theme, "VPN Manager");
+                        Typography::small(ui, &self.theme, "All-in-One");
                     });
                 });
             } else {
                 ui.horizontal(|ui| {
-                    ui.add_space(10.0);
+                    Spacing::sm(ui);
                     ui.vertical(|ui| {
-                        ui.heading("VPN Manager");
-                        ui.label("All-in-One");
+                        Typography::heading(ui, &self.theme, "VPN Manager");
+                        Typography::small(ui, &self.theme, "All-in-One");
                     });
                 });
             }
-            ui.add_space(30.0);
+            Spacing::lg(ui);
 
-            let button_size = egui::vec2(200.0, 40.0);
+            let button_size = egui::vec2(180.0, 28.0);
             
-            if ui.add_sized(button_size, egui::Button::new("🏠 Home")).clicked() {
+            // Navigation buttons with consistent styling
+            let home_selected = self.current_panel == Panel::Home;
+            if self.draw_nav_button(ui, "🏠 Home", button_size, home_selected) {
                 self.current_panel = Panel::Home;
             }
+            Spacing::xs(ui);
             
-            if ui.add_sized(button_size, egui::Button::new("🔒 VPN")).clicked() {
+            let vpn_selected = self.current_panel == Panel::Vpn;
+            if self.draw_nav_button(ui, "🔒 VPN", button_size, vpn_selected) {
                 self.current_panel = Panel::Vpn;
             }
+            Spacing::xs(ui);
             
-            if ui.add_sized(button_size, egui::Button::new("🖥️ Remote")).clicked() {
+            let remote_selected = self.current_panel == Panel::Remote;
+            if self.draw_nav_button(ui, "🖥️ Remote", button_size, remote_selected) {
                 self.current_panel = Panel::Remote;
             }
             
-            ui.add_space(20.0);
+            Spacing::sm(ui);
             
             // Show update indicator on Settings button if update is available
             let settings_text = if let Some(update) = &self.update_info {
@@ -352,20 +564,46 @@ impl App {
                 } else {
                     "⚙️ Settings"
                 }
+            } else if self.checking_updates {
+                "⚙️ Settings ⏳"
             } else {
                 "⚙️ Settings"
             };
             
-            if ui.add_sized(button_size, egui::Button::new(settings_text)).clicked() {
+            let settings_selected = self.current_panel == Panel::Settings;
+            if self.draw_nav_button(ui, settings_text, button_size, settings_selected) {
                 self.current_panel = Panel::Settings;
             }
         });
+    }
+    
+    fn draw_nav_button(&self, ui: &mut egui::Ui, text: &str, size: egui::Vec2, is_selected: bool) -> bool {
+        let button_color = if is_selected {
+            self.theme.primary
+        } else {
+            self.theme.surface_variant
+        };
+        
+        let text_color = if is_selected {
+            egui::Color32::WHITE
+        } else {
+            self.theme.text_primary
+        };
+        
+        let button = egui::Button::new(
+            egui::RichText::new(text).color(text_color).size(12.0)
+        )
+        .fill(button_color)
+        .stroke(egui::Stroke::new(if is_selected { 0.0 } else { 1.0 }, self.theme.border))
+        .rounding(egui::Rounding::same(4.0));
+        
+        ui.add_sized(size, button).clicked()
     }
 
     fn draw_main_content(&mut self, _ctx: &egui::Context, ui: &mut egui::Ui) {
         match self.current_panel {
             Panel::Home => {
-                HomePanel::draw(ui, &mut self.config, &mut self.network_manager);
+                HomePanel::draw(ui, self);
             }
             Panel::Vpn => {
                 VpnPanel::draw(ui, &mut self.config, &mut self.network_manager, 
@@ -415,6 +653,12 @@ impl eframe::App for App {
             }
         }
         
+        // Poll update check results
+        self.poll_update_check();
+        
+        // Poll device operation results
+        self.poll_device_operations();
+        
         // Check for updates periodically (every 24 hours)
         if self.last_update_check.elapsed().as_secs() > 86400 && !self.checking_updates {
             self.schedule_update_check();
@@ -453,8 +697,8 @@ impl eframe::App for App {
 
         egui::SidePanel::left("sidebar")
             .resizable(false)
-            .min_width(250.0)
-            .max_width(250.0)
+            .min_width(200.0)
+            .max_width(200.0)
             .show(ctx, |ui| {
                 ui.style_mut().visuals.panel_fill = self.theme.surface;
                 self.draw_sidebar(ctx, ui);

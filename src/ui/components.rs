@@ -1,5 +1,5 @@
 use eframe::egui::{self, Color32, Rounding, Stroke, Vec2};
-use crate::ui::theme::Theme;
+use crate::ui::theme::{Theme, DeviceType, ActionType};
 
 pub struct GlassPanel;
 
@@ -102,9 +102,9 @@ impl GlassButton {
         };
         
         let text_color = if is_primary || is_loading { 
-            theme.text_primary 
+            Color32::WHITE
         } else { 
-            theme.text_secondary 
+            theme.text_primary 
         };
         
         let display_text = if is_loading {
@@ -121,10 +121,10 @@ impl GlassButton {
         };
         
         let button = egui::Button::new(
-            egui::RichText::new(display_text).color(text_color)
+            egui::RichText::new(display_text).color(text_color).size(13.0)
         )
         .fill(button_color)
-        .stroke(Stroke::new(1.0, theme.border))
+        .stroke(Stroke::new(if is_primary { 0.0 } else { 1.0 }, theme.border))
         .rounding(Rounding::same(8.0));
         
         let response = ui.add_sized([120.0, 35.0], button);
@@ -147,6 +147,198 @@ impl GlassButton {
         }
         
         response
+    }
+    
+    pub fn show_compact(ui: &mut egui::Ui, theme: &Theme, text: &str, is_primary: bool, size: Vec2) -> egui::Response {
+        let button_color = theme.get_button_color(is_primary);
+        let text_color = if is_primary { Color32::WHITE } else { theme.text_primary };
+        
+        let button = egui::Button::new(
+            egui::RichText::new(text).color(text_color).size(12.0)
+        )
+        .fill(button_color)
+        .stroke(Stroke::new(if is_primary { 0.0 } else { 1.0 }, theme.border))
+        .rounding(Rounding::same(6.0));
+        
+        ui.add_sized(size, button)
+    }
+}
+
+// Modern standardized button component
+pub struct ModernButton;
+
+impl ModernButton {
+    pub fn primary(ui: &mut egui::Ui, theme: &Theme, text: &str) -> egui::Response {
+        Self::show(ui, theme, text, true, egui::vec2(120.0, 28.0))
+    }
+    
+    pub fn secondary(ui: &mut egui::Ui, theme: &Theme, text: &str) -> egui::Response {
+        Self::show(ui, theme, text, false, egui::vec2(120.0, 28.0))
+    }
+    
+    pub fn small(ui: &mut egui::Ui, theme: &Theme, text: &str, is_primary: bool) -> egui::Response {
+        Self::show(ui, theme, text, is_primary, egui::vec2(80.0, 22.0))
+    }
+    
+    pub fn large(ui: &mut egui::Ui, theme: &Theme, text: &str, is_primary: bool) -> egui::Response {
+        Self::show(ui, theme, text, is_primary, egui::vec2(140.0, 32.0))
+    }
+    
+    fn show(ui: &mut egui::Ui, theme: &Theme, text: &str, is_primary: bool, size: egui::Vec2) -> egui::Response {
+        let button_color = theme.get_button_color(is_primary);
+        let text_color = theme.get_button_text_color(is_primary);
+        
+        let button = egui::Button::new(
+            egui::RichText::new(text).color(text_color).size(12.0)
+        )
+        .fill(button_color)
+        .stroke(egui::Stroke::new(if is_primary { 0.0 } else { 1.0 }, theme.border))
+        .rounding(egui::Rounding::same(4.0));
+        
+        ui.add_sized(size, button)
+    }
+}
+
+// Modern card component with standardized styling
+pub struct ModernCard;
+
+impl ModernCard {
+    pub fn show<R>(
+        ui: &mut egui::Ui,
+        theme: &Theme,
+        title: &str,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        Self::show_with_options(ui, theme, title, false, false, add_contents)
+    }
+    
+    pub fn show_hoverable<R>(
+        ui: &mut egui::Ui,
+        theme: &Theme,
+        title: &str,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        Self::show_with_options(ui, theme, title, true, false, add_contents)
+    }
+    
+    pub fn show_with_options<R>(
+        ui: &mut egui::Ui,
+        theme: &Theme,
+        title: &str,
+        is_hoverable: bool,
+        is_active: bool,
+        add_contents: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> R {
+        let available_rect = ui.available_rect_before_wrap();
+        let response = ui.allocate_response(available_rect.size(), egui::Sense::hover());
+        let is_hovered = is_hoverable && response.hovered();
+        
+        let (bg_color, border_color, border_width) = theme.get_card_colors(is_hovered, is_active);
+        
+        egui::Frame::none()
+            .fill(bg_color)
+            .stroke(egui::Stroke::new(border_width, border_color))
+            .rounding(egui::Rounding::same(6.0))
+            .inner_margin(egui::Margin::same(8.0))
+            .shadow(theme.get_shadow(is_hovered))
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    if !title.is_empty() {
+                        ui.label(
+                            egui::RichText::new(title)
+                                .size(16.0)
+                                .color(theme.text_primary)
+                                .strong()
+                        );
+                        ui.add_space(4.0);
+                    }
+                    add_contents(ui)
+                }).inner
+            }).inner
+    }
+}
+
+// Standardized spacing helper
+pub struct Spacing;
+
+impl Spacing {
+    pub fn xs(ui: &mut egui::Ui) {
+        ui.add_space(2.0);
+    }
+    
+    pub fn sm(ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+    }
+    
+    pub fn md(ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+    }
+    
+    pub fn lg(ui: &mut egui::Ui) {
+        ui.add_space(8.0);
+    }
+    
+    pub fn xl(ui: &mut egui::Ui) {
+        ui.add_space(12.0);
+    }
+    
+    pub fn xxl(ui: &mut egui::Ui) {
+        ui.add_space(16.0);
+    }
+}
+
+// Standardized typography
+pub struct Typography;
+
+impl Typography {
+    pub fn title(ui: &mut egui::Ui, theme: &Theme, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(20.0)
+                .color(theme.text_primary)
+                .strong()
+        );
+    }
+    
+    pub fn heading(ui: &mut egui::Ui, theme: &Theme, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(16.0)
+                .color(theme.text_primary)
+                .strong()
+        );
+    }
+    
+    pub fn body(ui: &mut egui::Ui, theme: &Theme, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(12.0)
+                .color(theme.text_primary)
+        );
+    }
+    
+    pub fn secondary(ui: &mut egui::Ui, theme: &Theme, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(12.0)
+                .color(theme.text_secondary)
+        );
+    }
+    
+    pub fn small(ui: &mut egui::Ui, theme: &Theme, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(10.0)
+                .color(theme.text_secondary)
+        );
+    }
+    
+    pub fn disabled(ui: &mut egui::Ui, theme: &Theme, text: &str) {
+        ui.label(
+            egui::RichText::new(text)
+                .size(12.0)
+                .color(theme.text_disabled)
+        );
     }
 }
 
@@ -184,30 +376,297 @@ pub struct InputField;
 impl InputField {
     pub fn show(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut String, placeholder: &str) {
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new(label).color(theme.text_secondary));
+            ui.label(egui::RichText::new(label).color(theme.text_secondary).size(12.0));
             ui.add_space(4.0);
             
-            let text_edit = egui::TextEdit::singleline(value)
-                .hint_text(placeholder)
-                .desired_width(ui.available_width())
-                .font(egui::TextStyle::Body);
+            let response = ui.allocate_response(egui::vec2(ui.available_width(), 32.0), egui::Sense::click());
+            let is_focused = ui.memory(|mem| mem.has_focus(response.id));
             
-            ui.add(text_edit);
+            // Custom frame for better text input styling
+            let bg_color = if is_focused { theme.surface_variant } else { theme.surface_variant };
+            let border_color = if is_focused { theme.primary } else { theme.border };
+            let border_width = if is_focused { 2.0 } else { 1.0 };
+            
+            egui::Frame::none()
+                .fill(bg_color)
+                .stroke(Stroke::new(border_width, border_color))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                .show(ui, |ui| {
+                    let text_edit = egui::TextEdit::singleline(value)
+                        .hint_text(egui::RichText::new(placeholder).color(theme.text_disabled).size(13.0))
+                        .desired_width(ui.available_width())
+                        .font(egui::TextStyle::Body)
+                        .frame(false); // Remove default frame
+                    
+                    ui.add(text_edit);
+                });
         });
     }
     
     pub fn show_password(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut String, placeholder: &str) {
         ui.vertical(|ui| {
-            ui.label(egui::RichText::new(label).color(theme.text_secondary));
+            ui.label(egui::RichText::new(label).color(theme.text_secondary).size(12.0));
             ui.add_space(4.0);
             
-            let text_edit = egui::TextEdit::singleline(value)
-                .hint_text(placeholder)
-                .desired_width(ui.available_width())
-                .password(true)
-                .font(egui::TextStyle::Body);
+            let response = ui.allocate_response(egui::vec2(ui.available_width(), 32.0), egui::Sense::click());
+            let is_focused = ui.memory(|mem| mem.has_focus(response.id));
             
-            ui.add(text_edit);
+            // Custom frame for better text input styling
+            let bg_color = if is_focused { theme.surface_variant } else { theme.surface_variant };
+            let border_color = if is_focused { theme.primary } else { theme.border };
+            let border_width = if is_focused { 2.0 } else { 1.0 };
+            
+            egui::Frame::none()
+                .fill(bg_color)
+                .stroke(Stroke::new(border_width, border_color))
+                .rounding(Rounding::same(8.0))
+                .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                .show(ui, |ui| {
+                    let text_edit = egui::TextEdit::singleline(value)
+                        .hint_text(egui::RichText::new(placeholder).color(theme.text_disabled).size(13.0))
+                        .desired_width(ui.available_width())
+                        .password(true)
+                        .font(egui::TextStyle::Body)
+                        .frame(false); // Remove default frame
+                    
+                    ui.add(text_edit);
+                });
         });
+    }
+    
+    pub fn show_inline(ui: &mut egui::Ui, theme: &Theme, label: &str, value: &mut String, placeholder: &str) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(label).color(theme.text_secondary).size(12.0));
+            ui.add_space(8.0);
+            
+            let response = ui.allocate_response(egui::vec2(200.0, 28.0), egui::Sense::click());
+            let is_focused = ui.memory(|mem| mem.has_focus(response.id));
+            
+            let bg_color = if is_focused { theme.surface_variant } else { theme.surface_variant };
+            let border_color = if is_focused { theme.primary } else { theme.border };
+            let border_width = if is_focused { 2.0 } else { 1.0 };
+            
+            egui::Frame::none()
+                .fill(bg_color)
+                .stroke(Stroke::new(border_width, border_color))
+                .rounding(Rounding::same(6.0))
+                .inner_margin(egui::Margin::symmetric(8.0, 6.0))
+                .show(ui, |ui| {
+                    let text_edit = egui::TextEdit::singleline(value)
+                        .hint_text(egui::RichText::new(placeholder).color(theme.text_disabled).size(12.0))
+                        .desired_width(ui.available_width())
+                        .font(egui::TextStyle::Body)
+                        .frame(false);
+                    
+                    ui.add(text_edit);
+                });
+        });
+    }
+}
+
+// Modern device card component with consistent styling
+pub struct DeviceCard;
+
+impl DeviceCard {
+    pub fn show_rdp<F>(
+        ui: &mut egui::Ui,
+        theme: &Theme,
+        name: &str,
+        host: &str,
+        port: u16,
+        on_connect: F,
+    ) -> egui::Response
+    where
+        F: FnOnce(),
+    {
+        let response = ui.allocate_response(egui::vec2(200.0, 70.0), egui::Sense::hover());
+        let is_hovered = response.hovered();
+        
+        let (bg_color, border_color, border_width) = theme.get_card_colors(is_hovered, false);
+        
+        egui::Frame::none()
+            .fill(bg_color)
+            .stroke(egui::Stroke::new(border_width, border_color))
+            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::same(12.0))
+            .shadow(theme.get_shadow(is_hovered))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Device icon with type-specific background
+                    let icon_bg = theme.primary.gamma_multiply(0.15);
+                    egui::Frame::none()
+                        .fill(icon_bg)
+                        .rounding(egui::Rounding::same(6.0))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("🖥️")
+                                    .size(20.0)
+                                    .color(theme.get_device_icon_color(DeviceType::RDP, true))
+                            );
+                        });
+                    
+                    ui.add_space(12.0);
+                    
+                    // Device information
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(name)
+                                .strong()
+                                .size(14.0)
+                                .color(theme.text_primary)
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{}:{}", host, port))
+                                .size(11.0)
+                                .color(theme.text_secondary)
+                        );
+                        
+                        // Connection type badge
+                        egui::Frame::none()
+                            .fill(theme.primary.gamma_multiply(0.2))
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new("RDP")
+                                        .size(9.0)
+                                        .color(theme.primary)
+                                );
+                            });
+                    });
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add(
+                            egui::Button::new("Connect")
+                                .fill(theme.get_action_button_color(ActionType::Primary))
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(egui::vec2(70.0, 30.0))
+                        ).clicked() {
+                            on_connect();
+                        }
+                    });
+                });
+            });
+        
+        response
+    }
+    
+    pub fn show_wol<F1, F2>(
+        ui: &mut egui::Ui,
+        theme: &Theme,
+        name: &str,
+        ip_address: &str,
+        is_online: bool,
+        on_wake: F1,
+        on_ping: F2,
+    ) -> egui::Response
+    where
+        F1: FnOnce(),
+        F2: FnOnce(),
+    {
+        let response = ui.allocate_response(egui::vec2(200.0, 70.0), egui::Sense::hover());
+        let is_hovered = response.hovered();
+        
+        let (bg_color, border_color, border_width) = theme.get_card_colors(is_hovered, is_online);
+        
+        egui::Frame::none()
+            .fill(bg_color)
+            .stroke(egui::Stroke::new(border_width, border_color))
+            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::same(12.0))
+            .shadow(theme.get_shadow(is_hovered))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Device icon with status-specific background
+                    let icon_bg = if is_online {
+                        theme.success.gamma_multiply(0.15)
+                    } else {
+                        theme.text_disabled.gamma_multiply(0.15)
+                    };
+                    
+                    egui::Frame::none()
+                        .fill(icon_bg)
+                        .rounding(egui::Rounding::same(6.0))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("💻")
+                                    .size(20.0)
+                                    .color(theme.get_device_icon_color(DeviceType::WOL, is_online))
+                            );
+                        });
+                    
+                    ui.add_space(12.0);
+                    
+                    // Device information
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(name)
+                                .strong()
+                                .size(14.0)
+                                .color(theme.text_primary)
+                        );
+                        ui.label(
+                            egui::RichText::new(ip_address)
+                                .size(11.0)
+                                .color(theme.text_secondary)
+                        );
+                        
+                        // Status badge
+                        let status_bg = if is_online {
+                            theme.success.gamma_multiply(0.2)
+                        } else {
+                            theme.text_disabled.gamma_multiply(0.2)
+                        };
+                        let status_color = theme.get_device_status_color(is_online);
+                        let status_text = if is_online { "Online" } else { "Offline" };
+                        
+                        egui::Frame::none()
+                            .fill(status_bg)
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("●")
+                                            .size(8.0)
+                                            .color(status_color)
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(status_text)
+                                            .size(9.0)
+                                            .color(status_color)
+                                    );
+                                });
+                            });
+                    });
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.add(
+                                egui::Button::new("Wake")
+                                    .fill(theme.get_action_button_color(ActionType::Success))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .min_size(egui::vec2(50.0, 28.0))
+                            ).clicked() {
+                                on_wake();
+                            }
+                            
+                            if ui.add(
+                                egui::Button::new("Ping")
+                                    .fill(theme.get_action_button_color(ActionType::Secondary))
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .min_size(egui::vec2(50.0, 28.0))
+                            ).clicked() {
+                                on_ping();
+                            }
+                        });
+                    });
+                });
+            });
+        
+        response
     }
 }

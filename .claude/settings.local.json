@@ -16,7 +16,8 @@
       "Bash(\"/mnt/c/Users/FRONTDESK_PC/.cargo/bin/cargo.exe\" --version)",
       "Bash(grep:*)",
       "Bash(rustc:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(cmd.exe:*)"
     ],
     "deny": []
   }

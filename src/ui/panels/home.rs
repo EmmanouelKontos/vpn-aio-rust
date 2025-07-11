@@ -1,30 +1,41 @@
 use eframe::egui;
 use crate::config::Config;
 use crate::network::{NetworkManager, VpnStatus};
-use crate::ui::components::{Card, StatusIndicator, GlassButton};
-use crate::ui::theme::Theme;
+use crate::ui::components::{StatusIndicator, ModernCard, Spacing, Typography};
+use crate::ui::theme::{Theme, DeviceType, ActionType};
+
+#[derive(Clone, Copy)]
+enum WolAction {
+    Wake,
+    Ping,
+}
 
 pub struct HomePanel;
 
 impl HomePanel {
-    pub fn draw(ui: &mut egui::Ui, config: &mut Config, network_manager: &mut NetworkManager) {
+    pub fn draw(ui: &mut egui::Ui, app: &mut crate::ui::App) {
         let theme = Theme::new();
         
-        ui.heading("Dashboard");
-        ui.add_space(20.0);
+        // Modern header with improved typography
+        ui.vertical(|ui| {
+            Typography::title(ui, &theme, "Dashboard");
+            Typography::secondary(ui, &theme, "Monitor and control your network devices");
+        });
+        
+        Spacing::lg(ui);
         
         // VPN Status Overview
-        Self::draw_vpn_overview(ui, &theme, config, network_manager);
-        ui.add_space(16.0);
+        Self::draw_vpn_overview(ui, &theme, &app.config, &mut app.network_manager);
+        Spacing::md(ui);
         
-        // Remote Devices Grid
-        Self::draw_remote_devices(ui, &theme, config, network_manager);
+        // Remote Devices Grid with improved layout
+        Self::draw_remote_devices(ui, &theme, app);
     }
     
     fn draw_vpn_overview(ui: &mut egui::Ui, theme: &Theme, config: &Config, network_manager: &mut NetworkManager) {
-        Card::show(ui, theme, "VPN Status", |ui| {
+        ModernCard::show(ui, theme, "VPN Status", |ui| {
             ui.horizontal(|ui| {
-                // VPN Status
+                // VPN Status with modern indicator
                 match &network_manager.vpn_status {
                     VpnStatus::Disconnected => {
                         StatusIndicator::show(ui, theme, false, "No VPN Connection");
@@ -41,19 +52,19 @@ impl HomePanel {
                 }
                 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(egui::RichText::new(format!("{} VPN configs", config.vpn_configs.len())).color(theme.text_secondary));
+                    Typography::small(ui, theme, &format!("{} VPN configs", config.vpn_configs.len()));
                 });
             });
             
             // VPN Connection Controls
             if !config.vpn_configs.is_empty() {
-                ui.add_space(12.0);
+                Spacing::md(ui);
                 ui.separator();
-                ui.add_space(8.0);
+                Spacing::sm(ui);
                 
                 ui.horizontal(|ui| {
-                    ui.label("Quick Connect:");
-                    ui.add_space(8.0);
+                    Typography::body(ui, theme, "Quick Connect:");
+                    Spacing::sm(ui);
                     
                     // VPN selector
                     let mut selected_vpn = None;
@@ -71,7 +82,8 @@ impl HomePanel {
                         if is_connected {
                             if ui.add(egui::Button::new("Disconnect")
                                 .fill(theme.error)
-                                .min_size(egui::vec2(80.0, 28.0))).clicked() {
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(egui::vec2(80.0, 32.0))).clicked() {
                                 if let Some(vpn_config) = config.vpn_configs.first() {
                                     let runtime = tokio::runtime::Runtime::new().unwrap();
                                     runtime.block_on(async {
@@ -85,7 +97,8 @@ impl HomePanel {
                             
                             if ui.add_enabled(button_enabled, egui::Button::new(button_text)
                                 .fill(theme.primary)
-                                .min_size(egui::vec2(80.0, 28.0))).clicked() {
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(egui::vec2(80.0, 32.0))).clicked() {
                                 if let Some(vpn_config) = config.vpn_configs.first() {
                                     let runtime = tokio::runtime::Runtime::new().unwrap();
                                     runtime.block_on(async {
@@ -109,37 +122,48 @@ impl HomePanel {
         });
     }
     
-    fn draw_remote_devices(ui: &mut egui::Ui, theme: &Theme, config: &mut Config, network_manager: &mut NetworkManager) {
-        Card::show(ui, theme, "Remote Devices", |ui| {
-            if config.rdp_configs.is_empty() && config.wol_devices.is_empty() {
-                ui.centered_and_justified(|ui| {
-                    ui.label(egui::RichText::new("No remote devices configured").color(theme.text_secondary));
+    fn draw_remote_devices(ui: &mut egui::Ui, theme: &Theme, app: &mut crate::ui::App) {
+        ModernCard::show(ui, theme, "Remote Devices", |ui| {
+            if app.config.rdp_configs.is_empty() && app.config.wol_devices.is_empty() {
+                ui.vertical_centered(|ui| {
+                    Spacing::lg(ui);
+                    ui.label(egui::RichText::new("🖥️").size(32.0).color(theme.text_disabled));
+                    Spacing::md(ui);
+                    Typography::heading(ui, theme, "No devices configured");
+                    Typography::secondary(ui, theme, "Add RDP or WoL devices to get started");
+                    Spacing::lg(ui);
                 });
                 return;
             }
             
-            // Create a responsive grid layout for devices
+            // Calculate grid layout
             let available_width = ui.available_width();
-            let card_width = 180.0;
-            let card_height = 60.0;
-            let spacing = 8.0;
+            let card_width = 220.0;
+            let spacing = 12.0;
             let cards_per_row = ((available_width + spacing) / (card_width + spacing)).floor() as usize;
-            let cards_per_row = cards_per_row.max(1);
+            let cards_per_row = cards_per_row.max(1).min(4); // Max 4 cards per row for better visibility
             
-            // Calculate actual card width to fill available space
-            let actual_card_width = (available_width - (cards_per_row as f32 - 1.0) * spacing) / cards_per_row as f32;
+            let total_devices = app.config.rdp_configs.len() + app.config.wol_devices.len();
             
-            let mut device_count = 0;
-            let total_devices = config.rdp_configs.len() + config.wol_devices.len();
+            // Collect device operation actions separately to avoid borrow conflicts
+            let mut pending_operations = Vec::new();
             
-            // Use a grid layout for better responsiveness
-            egui::Grid::new("remote_devices_grid")
+            // Show devices in a responsive grid
+            egui::Grid::new("device_grid")
                 .num_columns(cards_per_row)
                 .spacing(egui::vec2(spacing, spacing))
                 .show(ui, |ui| {
+                    let mut device_count = 0;
+                    
                     // RDP Devices
-                    for rdp_config in &config.rdp_configs {
-                        Self::draw_rdp_device_card_compact(ui, theme, rdp_config, actual_card_width, card_height);
+                    for rdp_config in &app.config.rdp_configs {
+                        let connect_state = app.get_device_operation_state(&rdp_config.name, "connect");
+                        
+                        if Self::draw_rdp_device_card_with_state(ui, theme, rdp_config, connect_state) {
+                            // Queue async RDP connection
+                            pending_operations.push(crate::ui::DeviceOperationType::RdpConnect(rdp_config.clone()));
+                        }
+                        
                         device_count += 1;
                         if device_count % cards_per_row == 0 {
                             ui.end_row();
@@ -147,8 +171,30 @@ impl HomePanel {
                     }
                     
                     // WOL Devices
-                    for wol_device in &config.wol_devices {
-                        Self::draw_wol_device_card_compact(ui, theme, wol_device, network_manager, actual_card_width, card_height);
+                    for wol_device in &app.config.wol_devices {
+                        let is_online = app.network_manager.wol_devices
+                            .iter()
+                            .find(|d| d.device.name == wol_device.name)
+                            .map(|d| d.is_online)
+                            .unwrap_or(false);
+                        
+                        let wake_state = app.get_device_operation_state(&wol_device.name, "wake");
+                        let ping_state = app.get_device_operation_state(&wol_device.name, "ping");
+                        
+                        let action = Self::draw_wol_device_card_with_state(ui, theme, wol_device, is_online, wake_state, ping_state);
+                        
+                        match action {
+                            Some(WolAction::Wake) => {
+                                // Queue async Wake on LAN
+                                pending_operations.push(crate::ui::DeviceOperationType::Wake(wol_device.clone()));
+                            }
+                            Some(WolAction::Ping) => {
+                                // Queue async Ping
+                                pending_operations.push(crate::ui::DeviceOperationType::Ping(wol_device.clone()));
+                            }
+                            None => {}
+                        }
+                        
                         device_count += 1;
                         if device_count % cards_per_row == 0 {
                             ui.end_row();
@@ -160,117 +206,285 @@ impl HomePanel {
                         ui.end_row();
                     }
                 });
+            
+            // Process pending operations after all borrows are done
+            for operation in pending_operations {
+                match &operation {
+                    crate::ui::DeviceOperationType::RdpConnect(rdp_config) => {
+                        app.start_device_operation(
+                            rdp_config.name.clone(),
+                            "connect".to_string(),
+                            operation
+                        );
+                    }
+                    crate::ui::DeviceOperationType::Wake(wol_device) => {
+                        app.start_device_operation(
+                            wol_device.name.clone(),
+                            "wake".to_string(),
+                            operation
+                        );
+                    }
+                    crate::ui::DeviceOperationType::Ping(wol_device) => {
+                        app.start_device_operation(
+                            wol_device.name.clone(),
+                            "ping".to_string(),
+                            operation
+                        );
+                    }
+                }
+            }
+            
+            // Device summary
+            if total_devices > 0 {
+                Spacing::md(ui);
+                ui.separator();
+                Spacing::sm(ui);
+                
+                ui.horizontal(|ui| {
+                    Typography::small(ui, theme, &format!("Total: {} devices", total_devices));
+                    if !app.config.rdp_configs.is_empty() {
+                        ui.label(egui::RichText::new("•").color(theme.text_disabled));
+                        Typography::small(ui, theme, &format!("{} RDP", app.config.rdp_configs.len()));
+                    }
+                    if !app.config.wol_devices.is_empty() {
+                        ui.label(egui::RichText::new("•").color(theme.text_disabled));
+                        let online_count = app.network_manager.wol_devices.iter().filter(|d| d.is_online).count();
+                        Typography::small(ui, theme, &format!("{} WoL ({} online)", app.config.wol_devices.len(), online_count));
+                    }
+                });
+            }
         });
     }
     
-    fn draw_rdp_device_card_compact(ui: &mut egui::Ui, theme: &Theme, rdp_config: &crate::config::RdpConfig, card_width: f32, card_height: f32) {
+    fn draw_rdp_device_card_with_state(ui: &mut egui::Ui, theme: &Theme, rdp_config: &crate::config::RdpConfig, operation_state: &crate::ui::DeviceOperationState) -> bool {
+        let response = ui.allocate_response(egui::vec2(200.0, 70.0), egui::Sense::hover());
+        let is_hovered = response.hovered();
+        
+        let (bg_color, border_color, border_width) = theme.get_card_colors(is_hovered, false);
+        
+        let mut clicked = false;
+        
         egui::Frame::none()
-            .fill(theme.surface_variant)
-            .stroke(egui::Stroke::new(1.0, theme.border))
-            .rounding(egui::Rounding::same(6.0))
-            .inner_margin(egui::Margin::same(8.0))
+            .fill(bg_color)
+            .stroke(egui::Stroke::new(border_width, border_color))
+            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::same(12.0))
+            .shadow(theme.get_shadow(is_hovered))
             .show(ui, |ui| {
-                ui.set_min_size(egui::vec2(card_width, card_height));
-                ui.set_max_size(egui::vec2(card_width, card_height));
-                
                 ui.horizontal(|ui| {
-                    // Device icon
-                    ui.label(egui::RichText::new("🖥️").size(20.0));
-                    ui.add_space(4.0);
-                    
-                    ui.vertical(|ui| {
-                        // Device name
-                        ui.label(egui::RichText::new(&rdp_config.name).strong().size(12.0));
-                        ui.label(egui::RichText::new(format!("{}:{}", rdp_config.host, rdp_config.port)).color(theme.text_secondary).size(10.0));
-                    });
-                    
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Connect button
-                        if ui.add(egui::Button::new("Connect")
-                            .fill(theme.primary)
-                            .min_size(egui::vec2(60.0, 24.0))).clicked() {
-                            // RDP connection logic
-                            let runtime = tokio::runtime::Runtime::new().unwrap();
-                            runtime.block_on(async {
-                                match crate::network::rdp::connect(rdp_config).await {
-                                    Ok(_) => {
-                                        log::info!("RDP connection initiated to {}", rdp_config.name);
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to connect to RDP {}: {}", rdp_config.name, e);
-                                    }
-                                }
-                            });
-                        }
-                    });
-                });
-            });
-    }
-    
-    fn draw_wol_device_card_compact(ui: &mut egui::Ui, theme: &Theme, wol_device: &crate::config::WolDevice, network_manager: &mut NetworkManager, card_width: f32, card_height: f32) {
-        egui::Frame::none()
-            .fill(theme.surface_variant)
-            .stroke(egui::Stroke::new(1.0, theme.border))
-            .rounding(egui::Rounding::same(6.0))
-            .inner_margin(egui::Margin::same(8.0))
-            .show(ui, |ui| {
-                ui.set_min_size(egui::vec2(card_width, card_height));
-                ui.set_max_size(egui::vec2(card_width, card_height));
-                
-                ui.horizontal(|ui| {
-                    // Device icon with status
-                    let is_online = network_manager.wol_devices
-                        .iter()
-                        .find(|d| d.device.name == wol_device.name)
-                        .map(|d| d.is_online)
-                        .unwrap_or(false);
-                    
-                    let icon_color = if is_online { theme.success } else { theme.text_disabled };
-                    ui.label(egui::RichText::new("💻").size(20.0).color(icon_color));
-                    ui.add_space(4.0);
-                    
-                    ui.vertical(|ui| {
-                        // Device name and IP
-                        ui.label(egui::RichText::new(&wol_device.name).strong().size(12.0));
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(&wol_device.ip_address).color(theme.text_secondary).size(10.0));
-                            ui.add_space(4.0);
-                            // Status indicator
-                            let status_color = if is_online { theme.success } else { theme.error };
-                            ui.label(egui::RichText::new("●").color(status_color).size(8.0));
-                            ui.label(egui::RichText::new(if is_online { "Online" } else { "Offline" }).color(status_color).size(9.0));
+                    // Device icon with type-specific background
+                    let icon_bg = theme.primary.gamma_multiply(0.15);
+                    egui::Frame::none()
+                        .fill(icon_bg)
+                        .rounding(egui::Rounding::same(6.0))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("🖥️")
+                                    .size(20.0)
+                                    .color(theme.get_device_icon_color(DeviceType::RDP, true))
+                            );
                         });
+                    
+                    ui.add_space(12.0);
+                    
+                    // Device information
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(&rdp_config.name)
+                                .strong()
+                                .size(14.0)
+                                .color(theme.text_primary)
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{}:{}", rdp_config.host, rdp_config.port))
+                                .size(11.0)
+                                .color(theme.text_secondary)
+                        );
+                        
+                        // Connection type badge
+                        egui::Frame::none()
+                            .fill(theme.primary.gamma_multiply(0.2))
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new("RDP")
+                                        .size(9.0)
+                                        .color(theme.primary)
+                                );
+                            });
                     });
                     
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Action buttons
-                        if ui.add(egui::Button::new("Wake")
-                            .fill(theme.accent)
-                            .min_size(egui::vec2(40.0, 20.0))).clicked() {
-                            let runtime = tokio::runtime::Runtime::new().unwrap();
-                            runtime.block_on(async {
-                                match network_manager.wake_device(wol_device).await {
-                                    Ok(_) => {
-                                        log::info!("WoL packet sent successfully to {}", wol_device.name);
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to send WoL packet to {}: {}", wol_device.name, e);
-                                    }
-                                }
-                            });
+                        let (button_text, button_color, button_enabled) = match operation_state {
+                            crate::ui::DeviceOperationState::Idle => ("Connect", theme.get_action_button_color(ActionType::Primary), true),
+                            crate::ui::DeviceOperationState::Loading => ("Connecting...", theme.loading, false),
+                            crate::ui::DeviceOperationState::Success(_) => ("Connected ✓", theme.success, true),
+                            crate::ui::DeviceOperationState::Error(_) => ("Failed ✗", theme.error, true),
+                        };
+                        
+                        if ui.add_enabled(button_enabled,
+                            egui::Button::new(button_text)
+                                .fill(button_color)
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(egui::vec2(80.0, 30.0))
+                        ).clicked() && button_enabled {
+                            clicked = true;
                         }
                         
-                        if ui.add(egui::Button::new("Ping")
-                            .fill(theme.secondary)
-                            .min_size(egui::vec2(40.0, 20.0))).clicked() {
-                            let runtime = tokio::runtime::Runtime::new().unwrap();
-                            runtime.block_on(async {
-                                let is_online = network_manager.check_device_status(wol_device).await;
-                                log::info!("Device {} is {}", wol_device.name, if is_online { "online" } else { "offline" });
-                            });
+                        // Show operation feedback as tooltip
+                        if let crate::ui::DeviceOperationState::Success(msg) | crate::ui::DeviceOperationState::Error(msg) = operation_state {
+                            if ui.rect_contains_pointer(ui.max_rect()) {
+                                egui::show_tooltip_text(ui.ctx(), egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("tooltip")), egui::Id::new(format!("rdp_tooltip_{}", rdp_config.name)), msg);
+                            }
                         }
                     });
                 });
             });
+        
+        clicked
+    }
+    
+    fn draw_wol_device_card_with_state(
+        ui: &mut egui::Ui, 
+        theme: &Theme, 
+        wol_device: &crate::config::WolDevice, 
+        is_online: bool,
+        wake_state: &crate::ui::DeviceOperationState,
+        ping_state: &crate::ui::DeviceOperationState
+    ) -> Option<WolAction> {
+        let response = ui.allocate_response(egui::vec2(200.0, 70.0), egui::Sense::hover());
+        let is_hovered = response.hovered();
+        
+        let (bg_color, border_color, border_width) = theme.get_card_colors(is_hovered, is_online);
+        
+        let mut action = None;
+        
+        egui::Frame::none()
+            .fill(bg_color)
+            .stroke(egui::Stroke::new(border_width, border_color))
+            .rounding(egui::Rounding::same(8.0))
+            .inner_margin(egui::Margin::same(12.0))
+            .shadow(theme.get_shadow(is_hovered))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Device icon with status-specific background
+                    let icon_bg = if is_online {
+                        theme.success.gamma_multiply(0.15)
+                    } else {
+                        theme.text_disabled.gamma_multiply(0.15)
+                    };
+                    
+                    egui::Frame::none()
+                        .fill(icon_bg)
+                        .rounding(egui::Rounding::same(6.0))
+                        .inner_margin(egui::Margin::same(8.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("💻")
+                                    .size(20.0)
+                                    .color(theme.get_device_icon_color(DeviceType::WOL, is_online))
+                            );
+                        });
+                    
+                    ui.add_space(12.0);
+                    
+                    // Device information
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(&wol_device.name)
+                                .strong()
+                                .size(14.0)
+                                .color(theme.text_primary)
+                        );
+                        ui.label(
+                            egui::RichText::new(&wol_device.ip_address)
+                                .size(11.0)
+                                .color(theme.text_secondary)
+                        );
+                        
+                        // Status badge
+                        let status_bg = if is_online {
+                            theme.success.gamma_multiply(0.2)
+                        } else {
+                            theme.text_disabled.gamma_multiply(0.2)
+                        };
+                        let status_color = theme.get_device_status_color(is_online);
+                        let status_text = if is_online { "Online" } else { "Offline" };
+                        
+                        egui::Frame::none()
+                            .fill(status_bg)
+                            .rounding(egui::Rounding::same(4.0))
+                            .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("●")
+                                            .size(8.0)
+                                            .color(status_color)
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(status_text)
+                                            .size(9.0)
+                                            .color(status_color)
+                                    );
+                                });
+                            });
+                    });
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.horizontal(|ui| {
+                            // Wake button with state
+                            let (wake_text, wake_color, wake_enabled) = match wake_state {
+                                crate::ui::DeviceOperationState::Idle => ("Wake", theme.get_action_button_color(ActionType::Success), true),
+                                crate::ui::DeviceOperationState::Loading => ("Waking...", theme.loading, false),
+                                crate::ui::DeviceOperationState::Success(_) => ("Sent ✓", theme.success, true),
+                                crate::ui::DeviceOperationState::Error(_) => ("Failed ✗", theme.error, true),
+                            };
+                            
+                            if ui.add_enabled(wake_enabled,
+                                egui::Button::new(wake_text)
+                                    .fill(wake_color)
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .min_size(egui::vec2(60.0, 28.0))
+                            ).clicked() && wake_enabled {
+                                action = Some(WolAction::Wake);
+                            }
+                            
+                            // Ping button with state
+                            let (ping_text, ping_color, ping_enabled) = match ping_state {
+                                crate::ui::DeviceOperationState::Idle => ("Ping", theme.get_action_button_color(ActionType::Secondary), true),
+                                crate::ui::DeviceOperationState::Loading => ("Pinging...", theme.loading, false),
+                                crate::ui::DeviceOperationState::Success(_) => ("Ping ✓", theme.success, true),
+                                crate::ui::DeviceOperationState::Error(_) => ("Failed ✗", theme.error, true),
+                            };
+                            
+                            if ui.add_enabled(ping_enabled,
+                                egui::Button::new(ping_text)
+                                    .fill(ping_color)
+                                    .rounding(egui::Rounding::same(6.0))
+                                    .min_size(egui::vec2(60.0, 28.0))
+                            ).clicked() && ping_enabled {
+                                action = Some(WolAction::Ping);
+                            }
+                        });
+                        
+                        // Show operation feedback as tooltips
+                        if let crate::ui::DeviceOperationState::Success(msg) | crate::ui::DeviceOperationState::Error(msg) = wake_state {
+                            if ui.rect_contains_pointer(ui.max_rect()) {
+                                egui::show_tooltip_text(ui.ctx(), egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("tooltip")), egui::Id::new(format!("wake_tooltip_{}", wol_device.name)), msg);
+                            }
+                        }
+                        if let crate::ui::DeviceOperationState::Success(msg) | crate::ui::DeviceOperationState::Error(msg) = ping_state {
+                            if ui.rect_contains_pointer(ui.max_rect()) {
+                                egui::show_tooltip_text(ui.ctx(), egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("tooltip")), egui::Id::new(format!("ping_tooltip_{}", wol_device.name)), msg);
+                            }
+                        }
+                    });
+                });
+            });
+        
+        action
     }
 }
