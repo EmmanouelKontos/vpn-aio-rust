@@ -54,10 +54,19 @@ pub async fn connect_windows(config: &VpnConfig) -> Result<()> {
     })?;
     
     // On Windows, use the WireGuard service
-    let output = Command::new(&wireguard_exe)
-        .args(&["/installtunnelservice", &config.config_path])
-        .output()
-        .await?;
+    let mut cmd = Command::new(&wireguard_exe);
+    cmd.args(&["/installtunnelservice", &config.config_path])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
+    let output = cmd.output().await?;
     
     if !output.status.success() {
         return Err(anyhow::anyhow!(
@@ -128,10 +137,19 @@ pub async fn disconnect_windows(config: &VpnConfig) -> Result<()> {
         anyhow::anyhow!("WireGuard executable not found. Please install WireGuard from https://www.wireguard.com/install/")
     })?;
     
-    let output = Command::new(&wireguard_exe)
-        .args(&["/uninstalltunnelservice", &interface_name])
-        .output()
-        .await?;
+    let mut cmd = Command::new(&wireguard_exe);
+    cmd.args(&["/uninstalltunnelservice", &interface_name])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
+    let output = cmd.output().await?;
     
     if !output.status.success() {
         return Err(anyhow::anyhow!(
@@ -175,10 +193,19 @@ pub async fn get_status(interface_name: &str) -> Result<bool> {
 
 #[cfg(windows)]
 pub async fn get_status_windows(interface_name: &str) -> Result<bool> {
-    let output = Command::new("wg")
-        .args(&["show", interface_name])
-        .output()
-        .await?;
+    let mut cmd = Command::new("wg");
+    cmd.args(&["show", interface_name])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
+    let output = cmd.output().await?;
     
     Ok(output.status.success())
 }
@@ -231,10 +258,19 @@ pub async fn list_interfaces() -> Result<Vec<String>> {
 
 #[cfg(windows)]
 pub async fn list_interfaces_windows() -> Result<Vec<String>> {
-    let output = Command::new("wg")
-        .arg("show")
-        .output()
-        .await?;
+    let mut cmd = Command::new("wg");
+    cmd.arg("show")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
+    let output = cmd.output().await?;
     
     if !output.status.success() {
         return Ok(Vec::new());

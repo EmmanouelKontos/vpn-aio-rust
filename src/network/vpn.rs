@@ -16,14 +16,23 @@ pub async fn connect(config: &VpnConfig) -> Result<()> {
 
 #[cfg(windows)]
 pub async fn connect_windows(config: &VpnConfig) -> Result<()> {
-    let output = TokioCommand::new("openvpn")
-        .arg("--config")
+    let mut cmd = TokioCommand::new("openvpn");
+    cmd.arg("--config")
         .arg(&config.config_path)
         .arg("--daemon")
         .arg("--auth-user-pass")
         .arg("NUL")
-        .output()
-        .await?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
+    let output = cmd.output().await?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
@@ -70,12 +79,21 @@ pub async fn disconnect() -> Result<()> {
 
 #[cfg(windows)]
 pub async fn disconnect_windows() -> Result<()> {
-    let output = TokioCommand::new("taskkill")
-        .arg("/F")
+    let mut cmd = TokioCommand::new("taskkill");
+    cmd.arg("/F")
         .arg("/IM")
         .arg("openvpn.exe")
-        .output()
-        .await?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
+    let output = cmd.output().await?;
 
     if !output.status.success() {
         return Err(anyhow::anyhow!(
@@ -122,11 +140,20 @@ pub async fn check_connection_status() -> Result<bool> {
 
 #[cfg(windows)]
 pub async fn get_status_windows() -> Result<bool> {
-    let output = TokioCommand::new("tasklist")
-        .arg("/FI")
+    let mut cmd = TokioCommand::new("tasklist");
+    cmd.arg("/FI")
         .arg("IMAGENAME eq openvpn.exe")
-        .output()
-        .await?;
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null());
+    
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
+    let output = cmd.output().await?;
 
     let output_str = String::from_utf8_lossy(&output.stdout);
     Ok(output_str.contains("openvpn.exe"))

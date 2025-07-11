@@ -83,7 +83,13 @@ impl App {
         });
         
         info!("Initializing network manager...");
-        let network_manager = NetworkManager::new();
+        let mut network_manager = NetworkManager::new();
+        
+        // Initialize VPN status and WoL devices based on current system state
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let _ = runtime.block_on(async {
+            network_manager.initialize(&config.vpn_configs, &config.wol_devices).await
+        });
         
         let mut app = Self {
             config,
@@ -413,6 +419,33 @@ impl eframe::App for App {
         if self.last_update_check.elapsed().as_secs() > 86400 && !self.checking_updates {
             self.schedule_update_check();
             self.last_update_check = std::time::Instant::now();
+        }
+
+        // Refresh VPN status periodically (every 10 seconds)
+        if self.animation_time.rem_euclid(10.0) < 0.1 && !self.config.vpn_configs.is_empty() {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let _ = runtime.block_on(async {
+                self.network_manager.refresh_vpn_status(&self.config.vpn_configs).await
+            });
+        }
+        
+        // Sync WoL devices with config changes
+        self.network_manager.sync_wol_devices(&self.config.wol_devices);
+        
+        // Quick update device statuses more frequently (every 10 seconds)
+        if self.animation_time.rem_euclid(10.0) < 0.1 && !self.config.wol_devices.is_empty() {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let _ = runtime.block_on(async {
+                self.network_manager.quick_update_device_statuses().await
+            });
+        }
+        
+        // Full device status update less frequently (every 60 seconds)
+        if self.animation_time.rem_euclid(60.0) < 0.1 && !self.config.wol_devices.is_empty() {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let _ = runtime.block_on(async {
+                self.network_manager.update_device_statuses().await
+            });
         }
 
         // Removed automatic device status updates to prevent CMD spawning issues

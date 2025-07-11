@@ -49,14 +49,22 @@ impl WolPanel {
                         if GlassButton::show(ui, theme, "Ping", false).clicked() {
                             let runtime = tokio::runtime::Runtime::new().unwrap();
                             runtime.block_on(async {
-                                let _ = network_manager.check_device_status(device).await;
+                                let is_online = network_manager.check_device_status(device).await;
+                                log::info!("Device {} is {}", device.name, if is_online { "online" } else { "offline" });
                             });
                         }
                         
                         if GlassButton::show(ui, theme, "Wake Up", true).clicked() {
                             let runtime = tokio::runtime::Runtime::new().unwrap();
                             runtime.block_on(async {
-                                let _ = network_manager.wake_device(device).await;
+                                match network_manager.wake_device(device).await {
+                                    Ok(_) => {
+                                        log::info!("WoL packet sent successfully to {}", device.name);
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to send WoL packet to {}: {}", device.name, e);
+                                    }
+                                }
                             });
                         }
                         
